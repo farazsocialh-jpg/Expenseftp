@@ -36,6 +36,20 @@ workflows:
           select-java-version 17
           java -version
 
+      - name: Repair and Regenerate Gradle Wrapper
+        script: |
+          echo "Verifying and repairing Gradle wrapper to prevent corruption..."
+          if command -v gradle >/dev/null 2>&1; then
+            echo "System gradle command is available. Running gradle wrapper..."
+            gradle wrapper --gradle-version 9.3.1
+          else
+            echo "System gradle command not found. Fetching official gradle-wrapper.jar..."
+            mkdir -p gradle/wrapper
+            curl -L -o gradle/wrapper/gradle-wrapper.jar https://github.com/gradle/gradle/raw/v8.5/gradle/wrapper/gradle-wrapper.jar || curl -L -o gradle/wrapper/gradle-wrapper.jar https://github.com/gradle/gradle/raw/master/gradle/wrapper/gradle-wrapper.jar
+          fi
+          echo "Gradle wrapper check complete. File details:"
+          ls -la gradle/wrapper/
+
       - name: Reconstruct Debug Keystore
         script: |
           echo "Reconstructing debug.keystore from repository base64 source..."
@@ -107,6 +121,20 @@ workflows:
           echo "Setting up Java Development Kit (JDK) 17..."
           select-java-version 17
           java -version
+
+      - name: Repair and Regenerate Gradle Wrapper
+        script: |
+          echo "Verifying and repairing Gradle wrapper to prevent corruption..."
+          if command -v gradle >/dev/null 2>&1; then
+            echo "System gradle command is available. Running gradle wrapper..."
+            gradle wrapper --gradle-version 9.3.1
+          else
+            echo "System gradle command not found. Fetching official gradle-wrapper.jar..."
+            mkdir -p gradle/wrapper
+            curl -L -o gradle/wrapper/gradle-wrapper.jar https://github.com/gradle/gradle/raw/v8.5/gradle/wrapper/gradle-wrapper.jar || curl -L -o gradle/wrapper/gradle-wrapper.jar https://github.com/gradle/gradle/raw/master/gradle/wrapper/gradle-wrapper.jar
+          fi
+          echo "Gradle wrapper check complete. File details:"
+          ls -la gradle/wrapper/
 
       - name: Set up Keystore and credentials
         script: |
