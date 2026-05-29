@@ -201,7 +201,7 @@ object SmsParser {
         // 4. Determine Account
         val account = when {
             lowercase.contains("credit card") || lowercase.contains("cc") || lowercase.contains("creditcard") -> "Credit Card"
-            lowercase.contains("debit card") || lowercase.contains("dc") || lowercase.contains("a/c") || lowercase.contains("bank") -> "Bank"
+            lowercase.contains("debit card") || lowercase.contains("dc") || lowercase.contains("a/c") || lowercase.contains("bank") || lowercase.contains("card") -> "Bank"
             else -> "Cash"
         }
 
