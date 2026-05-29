@@ -38,10 +38,12 @@ abstract class AppDatabase : RoomDatabase() {
             override fun onCreate(db: SupportSQLiteDatabase) {
                 super.onCreate(db)
                 // Seed data on database creation using the raw db object to prevent Room deadlocks!
-                db.beginTransaction()
                 try {
                     // Default SMS sender setting
                     db.execSQL("INSERT INTO app_settings (key, value) VALUES ('selected_sms_sender', 'HDFCBank')")
+
+                    // Default Preferred Currency setting
+                    db.execSQL("INSERT INTO app_settings (key, value) VALUES ('preferred_currency', 'QAR')")
 
                     // Seed transaction data
                     val now = System.currentTimeMillis()
@@ -117,11 +119,8 @@ abstract class AppDatabase : RoomDatabase() {
                         statement.bindLong(8, now - 12 * 60 * 60 * 1000L)
                         statement.executeInsert()
                     }
-                    db.setTransactionSuccessful()
                 } catch (e: Exception) {
                     e.printStackTrace()
-                } finally {
-                    db.endTransaction()
                 }
             }
         }

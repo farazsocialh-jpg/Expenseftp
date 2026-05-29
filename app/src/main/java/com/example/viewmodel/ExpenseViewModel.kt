@@ -77,6 +77,14 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
             initialValue = "HDFCBank"
         )
 
+    // Preferred Currency flow, defaulting to QAR for Qatar
+    val preferredCurrencySetting: StateFlow<String> = repository.getSettingFlow("preferred_currency", "QAR")
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = "QAR"
+        )
+
     // Filter States for Transaction List
     private val _searchQuery = MutableStateFlow("")
     val searchQuery = _searchQuery.asStateFlow()
@@ -332,6 +340,12 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
     fun updateSmsSender(sender: String) {
         viewModelScope.launch {
             repository.saveSetting("selected_sms_sender", sender)
+        }
+    }
+
+    fun updatePreferredCurrency(currencyCode: String) {
+        viewModelScope.launch {
+            repository.saveSetting("preferred_currency", currencyCode)
         }
     }
 

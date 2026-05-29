@@ -105,6 +105,12 @@ fun MainScreen(
     val transactions by viewModel.filteredTransactions.collectAsStateWithLifecycle()
     val allTransactionsRaw by viewModel.allTransactions.collectAsStateWithLifecycle()
     val selectedSmsSender by viewModel.smsSenderSetting.collectAsStateWithLifecycle()
+    val preferredCurrency by viewModel.preferredCurrencySetting.collectAsStateWithLifecycle()
+
+    // Keep global formatting config synchronized reactively
+    LaunchedEffect(preferredCurrency) {
+        CurrencyConfig.selectedCurrency = preferredCurrency
+    }
 
     var showAddDialog by remember { mutableStateOf(false) }
     var editTransactionTarget by remember { mutableStateOf<TransactionEntity?>(null) }
@@ -1380,7 +1386,7 @@ fun BudgetsTab(
                     OutlinedTextField(
                         value = budgetAmountStr,
                         onValueChange = { budgetAmountStr = it },
-                        label = { Text("Constraints Amount Limit ($)") },
+                        label = { Text("Constraints Amount Limit (${CurrencyConfig.selectedCurrency})") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         shape = RoundedCornerShape(10.dp),
@@ -1827,6 +1833,53 @@ fun SettingsTab(
             }
         }
 
+        // PANEL 2.5: Preferred Currency Selection
+        val currentCurrency by viewModel.preferredCurrencySetting.collectAsStateWithLifecycle()
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("3. Core Application Currency", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                Text(
+                    text = "Configure the symbol used for displaying transactions, budgets, insights, and account ledger sheets.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                val currencyOptions = listOf(
+                    "QAR" to "QAR (ر.ق)",
+                    "USD" to "USD ($)",
+                    "EUR" to "EUR (€)",
+                    "GBP" to "GBP (£)",
+                    "INR" to "INR (₹)",
+                    "AED" to "AED (د.إ)",
+                    "SAR" to "SAR (ر.س)"
+                )
+
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    items(currencyOptions) { (code, label) ->
+                        val isSelected = currentCurrency == code
+                        FilterChip(
+                            selected = isSelected,
+                            onClick = { viewModel.updatePreferredCurrency(code) },
+                            label = { Text(label, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                            ),
+                            modifier = Modifier.testTag("currency_chip_$code")
+                        )
+                    }
+                }
+            }
+        }
+
         // PANEL 3: Local Database Exporter / Offline backups
         Card(
             modifier = Modifier.fillMaxWidth(),
@@ -1835,7 +1888,7 @@ fun SettingsTab(
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("3. Local Ledger Archiving (Offline Backup)", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                Text("4. Local Ledger Archiving (Offline Backup)", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                 Text("Export or import entire JSON ledger backups instantly. Restores multi-wallet accounts offline.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
                 Row(
@@ -1904,7 +1957,7 @@ fun SettingsTab(
             }
         }
 
-        // PANEL 4: Security Sim Biometrics & Clear Sandbox
+        // PANEL 5: Security Sim Biometrics & Clear Sandbox
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(16.dp),
@@ -1912,7 +1965,7 @@ fun SettingsTab(
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.2f))
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("4. Sandbox Security & Reset", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
+                Text("5. Sandbox Security & Reset", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
                 Button(
                     onClick = {
                         viewModel.clearAllTransactions()
@@ -2167,7 +2220,7 @@ fun TransactionFormDialog(
                 OutlinedTextField(
                     value = amountStr,
                     onValueChange = { amountStr = it },
-                    label = { Text("Fiducial Amount ($)") },
+                    label = { Text("Fiducial Amount (${CurrencyConfig.selectedCurrency})") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     shape = RoundedCornerShape(12.dp),
@@ -2338,7 +2391,20 @@ fun TransactionFormDialog(
 }
 
 // ---------------- CURRENCY UTILITIES ----------------
+object CurrencyConfig {
+    var selectedCurrency by mutableStateOf("QAR")
+}
+
 fun formatCurrency(amount: Double): String {
-    val format = NumberFormat.getCurrencyInstance(Locale.US)
-    return format.format(amount)
+    val currency = CurrencyConfig.selectedCurrency
+    return when (currency) {
+        "QAR" -> String.format(Locale.US, "QAR %,.2f", amount)
+        "USD" -> String.format(Locale.US, "$%,.2f", amount)
+        "EUR" -> String.format(Locale.US, "€%,.2f", amount)
+        "GBP" -> String.format(Locale.US, "£%,.2f", amount)
+        "INR" -> String.format(Locale.US, "₹%,.2f", amount)
+        "AED" -> String.format(Locale.US, "AED %,.2f", amount)
+        "SAR" -> String.format(Locale.US, "SAR %,.2f", amount)
+        else -> String.format(Locale.US, "%s %,.2f", currency, amount)
+    }
 }
