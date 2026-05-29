@@ -1,0 +1,148 @@
+# Codemagic CI/CD Configuration for Expense Manager (Native Android Application)
+# For complete documentation on setting up codemagic.yaml, visit:
+# https://docs.codemagic.io/yaml-configuration/setting-up-codemagic-yaml/
+
+workflows:
+  # -------------------------------------------------------------
+  # WORKFLOW 1: Android Debug APK
+  # Fast, automated build that compiles and signs a debug APK for direct testing.
+  # -------------------------------------------------------------
+  android-debug-apk:
+    name: Build Android Debug APK
+    max_build_duration: 60
+    instance_type: mac_mini_m1 # Mac mini M1 is standard, fast, and extremely stable.
+    # Note: If you prefer a Linux machine (available on free tiers), uncomment below:
+    # instance_type: linux_l
+    
+    triggering:
+      events:
+        - push
+        - pull_request
+      branch_patterns:
+        - pattern: '*'
+          include: true
+          source: true
+
+    environment:
+      vars:
+        # Codemagic default credentials can be configured in your Web dashboard if needed.
+        # This will auto-switch to JDK 17, which is required for Jetpack Compose and modern AGP.
+        JAVA_VERSION: "17"
+
+    scripts:
+      - name: Select Java version
+        script: |
+          echo "Setting up Java Development Kit (JDK) 17..."
+          select-java-version 17
+          java -version
+
+      - name: Reconstruct Debug Keystore
+        script: |
+          echo "Reconstructing debug.keystore from repository base64 source..."
+          python3 -c "import base64; open('debug.keystore', 'wb').write(base64.b64decode(open('debug.keystore.base64', 'r').read()))"
+          echo "Debug keystore successfully created at root directory."
+
+      - name: Configure Environment Secrets (.env)
+        script: |
+          echo "Generating build .env file for secrets gradle plugin integration..."
+          # If the user has defined GEMINI_API_KEY in Codemagic Environment variables, use it.
+          # Otherwise, default to the placeholder from .env.example.
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "GEMINI_API_KEY=MY_GEMINI_API_KEY (Using placeholder)" >> .env
+          else
+            echo "GEMINI_API_KEY=$GEMINI_API_KEY" >> .env
+          fi
+          cat .env
+
+      - name: Build Android Debug APK
+        script: |
+          echo "Running Gradle build task..."
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+    artifacts:
+      - app/build/outputs/apk/**/*.apk
+
+    publishing:
+      email:
+        recipients:
+          - mirzafarazhassan1@gmail.com # Replaces to notify user.
+        notify:
+          success: true
+          failure: true
+
+
+  # -------------------------------------------------------------
+  # WORKFLOW 2: Android Release APK (Signed)
+  # Designed to build a fully optimized, signed release binary ready for deployment.
+  # -------------------------------------------------------------
+  android-release-apk:
+    name: Build Android Release APK
+    max_build_duration: 60
+    instance_type: mac_mini_m1
+    # Note: If you prefer a Linux machine, uncomment below:
+    # instance_type: linux_l
+
+    triggering:
+      events:
+        - tag # Run on tag events (e.g. v1.0.0 releases)
+      branch_patterns:
+        - pattern: 'main'
+          include: true
+          source: true
+
+    environment:
+      groups:
+        # Define a secret group in Codemagic dashboard called 'android-release' with these variables:
+        # - STORE_PASSWORD (Keystore store password)
+        # - KEY_PASSWORD (PrivateKey password)
+        # - KEYSTORE_BASE64 (Base64 encoded .jks upload keystore)
+        - android-release
+      vars:
+        JAVA_VERSION: "17"
+
+    scripts:
+      - name: Select Java version
+        script: |
+          echo "Setting up Java Development Kit (JDK) 17..."
+          select-java-version 17
+          java -version
+
+      - name: Set up Keystore and credentials
+        script: |
+          echo "Reconstructing release keystore from Codemagic environment group variables..."
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "WARNING: KEYSTORE_BASE64 is empty! Creating a placeholder upload key file."
+            touch my-upload-key.jks
+          else
+            echo "$KEYSTORE_BASE64" | base64 --decode > my-upload-key.jks
+            echo "Release upload key successfully written to root directory."
+          fi
+
+      - name: Configure Environment Secrets (.env)
+        script: |
+          echo "Generating build .env file for secrets gradle plugin integration..."
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "GEMINI_API_KEY=MY_GEMINI_API_KEY" >> .env
+          else
+            echo "GEMINI_API_KEY=$GEMINI_API_KEY" >> .env
+          fi
+
+      - name: Build Android Release APK
+        script: |
+          echo "Building signed Release APK..."
+          chmod +x gradlew
+          # The KEYSTORE_PATH is custom-routed to the generated file at ${rootDir}/my-upload-key.jks
+          export KEYSTORE_PATH="$(pwd)/my-upload-key.jks"
+          ./gradlew assembleRelease
+
+    artifacts:
+      - app/build/outputs/apk/**/*.apk
+
+    publishing:
+      email:
+        recipients:
+          - mirzafarazhassan1@gmail.com
+        notify:
+          success: true
+          failure: true
