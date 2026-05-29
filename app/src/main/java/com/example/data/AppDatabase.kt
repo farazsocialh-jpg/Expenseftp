@@ -40,7 +40,7 @@ abstract class AppDatabase : RoomDatabase() {
                 // Seed data on database creation using the raw db object to prevent Room deadlocks!
                 try {
                     // Default SMS sender setting
-                    db.execSQL("INSERT INTO app_settings (key, value) VALUES ('selected_sms_sender', 'HDFCBank')")
+                    db.execSQL("INSERT INTO app_settings (key, value) VALUES ('selected_sms_sender', 'Cb SMS')")
 
                     // Default Preferred Currency setting
                     db.execSQL("INSERT INTO app_settings (key, value) VALUES ('preferred_currency', 'QAR')")

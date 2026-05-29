@@ -32,7 +32,7 @@ class SmsReceiver : BroadcastReceiver() {
                     val settingsDao = db.appSettingDao()
 
                     // Check the user-selected sender from db setting
-                    val selectedSender = settingsDao.getSettingByKeyImmediate("selected_sms_sender")?.value ?: "HDFCBank"
+                    val selectedSender = settingsDao.getSettingByKeyImmediate("selected_sms_sender")?.value ?: "Cb SMS"
 
                     for (pdu in pdus) {
                         val pduBytes = pdu as? ByteArray ?: continue
@@ -42,8 +42,8 @@ class SmsReceiver : BroadcastReceiver() {
 
                         Log.d(TAG, "Received SMS from '$sender' with body: '$body'")
 
-                        // Match selected sender (case-insensitive and could be partial match)
-                        if (sender.contains(selectedSender, ignoreCase = true) || selectedSender.contains(sender, ignoreCase = true)) {
+                        // Match selected sender using robust comparison (stripping hyphens and non-alphanumeric)
+                        if (SmsParser.isSameSender(sender, selectedSender)) {
                             val parsed = SmsParser.parseMessage(sender, body)
                             if (parsed != null && parsed.amount > 0.0) {
                                 // Real automatic parse and insert into database
@@ -55,7 +55,8 @@ class SmsReceiver : BroadcastReceiver() {
                                         tag = parsed.tag,
                                         description = "SMS Alert: ${parsed.description}",
                                         sender = sender,
-                                        account = parsed.account
+                                        account = parsed.account,
+                                        timestamp = sms.timestampMillis
                                     )
                                 )
                                 Log.i(TAG, "Automatically saved SMS transaction of ${parsed.amount} classified as ${parsed.type}")

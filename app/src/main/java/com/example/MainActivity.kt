@@ -970,7 +970,7 @@ fun RealTimeSmsSyncCard(
                             viewModel.updateSmsSender(it)
                         },
                         label = { Text("Filter Sender Code") },
-                        placeholder = { Text("e.g. HDFCBank, Chase") },
+                        placeholder = { Text("e.g. Cb SMS, Chase") },
                         singleLine = true,
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier

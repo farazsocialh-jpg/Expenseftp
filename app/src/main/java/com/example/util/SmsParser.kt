@@ -34,12 +34,12 @@ data class DictionaryMatchItem(
 object SmsParser {
     // Advanced Regex for amounts supporting multi-currency symbols and comma layouts
     private val amountRegex = Pattern.compile(
-        "(?:Rs\\.?|INR|USD|\\$|EUR|GBP|£|AED|SAR)\\s*([0-9,]+(?:\\.[0-9]{2})?)|([0-9,]+(?:\\.[0-9]{2})?)\\s*(?:USD|INR|EUR|GBP|Rs|bucks|dollars)",
+        "(?:Rs\\.?|INR|USD|\\$|EUR|GBP|£|AED|SAR|QAR|OMR|BHD|KWD)\\s*([0-9,]+(?:\\.[0-9]{2})?)|([0-9,]+(?:\\.[0-9]{2})?)\\s*(?:USD|INR|EUR|GBP|Rs|bucks|dollars|QAR|AED|SAR|OMR|BHD|KWD)",
         Pattern.CASE_INSENSITIVE
     )
     
     private val backupAmountRegex = Pattern.compile(
-        "(?:spent|debited|credited|charged|amount of|paid|recvd|received|trf|transfer of)\\s*(?:Rs\\.?|INR|\\$|EUR)?\\s*([0-9,]+(?:\\.[0-9]{2})?)",
+        "(?:spent|debited|credited|charged|amount of|paid|recvd|received|trf|transfer of|used for)\\s*(?:Rs\\.?|INR|\\$|EUR|QAR|AED|SAR)?\\s*([0-9,]+(?:\\.[0-9]{2})?)",
         Pattern.CASE_INSENSITIVE
     )
 
@@ -75,6 +75,7 @@ object SmsParser {
         DictionaryMatchItem("mobil", "Transport", "fuel", "Mobil"),
         DictionaryMatchItem("gasoline", "Transport", "fuel", "Gas Station"),
         DictionaryMatchItem("petrol", "Transport", "fuel", "Petrol Pump"),
+        DictionaryMatchItem("woqod", "Transport", "fuel", "Woqod Petrol Station"),
         
         // Entertainment & Streaming
         DictionaryMatchItem("netflix", "Entertainment", "subscription", "Netflix"),
@@ -86,7 +87,7 @@ object SmsParser {
         DictionaryMatchItem("hbo max", "Entertainment", "subscription", "HBO Max"),
         DictionaryMatchItem("cinema", "Entertainment", "entertainment", "Movie Theatre"),
         
-        // E-Commerce, Retail & Grocery Supermarkets
+        // E-Commerce, Retail & Grocery Supermarkets (including Middle Eastern retailers)
         DictionaryMatchItem("amazon", "Shopping", "shopping", "Amazon Store"),
         DictionaryMatchItem("walmart", "Shopping", "groceries", "Walmart"),
         DictionaryMatchItem("target", "Shopping", "shopping", "Target"),
@@ -96,6 +97,14 @@ object SmsParser {
         DictionaryMatchItem("kroger", "Shopping", "groceries", "Kroger"),
         DictionaryMatchItem("wholefoods", "Shopping", "groceries", "Whole Foods Market"),
         DictionaryMatchItem("tesco", "Shopping", "groceries", "Tesco"),
+        DictionaryMatchItem("lulu", "Shopping", "groceries", "LuLu Hypermarket"),
+        DictionaryMatchItem("carrefour", "Shopping", "groceries", "Carrefour"),
+        DictionaryMatchItem("al meera", "Shopping", "groceries", "Al Meera"),
+        DictionaryMatchItem("taif", "Shopping", "groceries", "Taif Hypermarket"),
+        DictionaryMatchItem("safari", "Shopping", "groceries", "Safari Mall"),
+        DictionaryMatchItem("monoprix", "Shopping", "groceries", "Monoprix"),
+        DictionaryMatchItem("spar", "Shopping", "groceries", "SPAR"),
+        DictionaryMatchItem("sidra", "Shopping", "groceries", "Sidra Convenience"),
         
         // Professional Income Sources
         DictionaryMatchItem("salary", "Salary", "salary", "Employer Direct Account"),
@@ -120,7 +129,7 @@ object SmsParser {
         messageText: String, 
         userRules: List<CustomRule> = emptyList()
     ): ParsedSmsTransaction? {
-        val text = messageText.trim()
+        val text = messageText.replace(Regex("\\s+"), " ").trim()
         if (text.isEmpty()) return null
 
         // 1. Extract Amount
@@ -229,7 +238,8 @@ object SmsParser {
             lowercase.contains("debit") || lowercase.contains("debited") || 
             lowercase.contains("spent") || lowercase.contains("withdrawn") || 
             lowercase.contains("charged") || lowercase.contains("paid") || 
-            lowercase.contains("payment") || lowercase.contains("purchase") -> "DEBIT"
+            lowercase.contains("payment") || lowercase.contains("purchase") ||
+            lowercase.contains("used for") || lowercase.contains("used") -> "DEBIT"
 
             else -> "DEBIT" // Standard default is debit
         }
@@ -269,13 +279,31 @@ object SmsParser {
         val words = text.split(" ")
         for (i in 0 until words.size - 1) {
             if (keywords.contains(words[i].lowercase()) && words[i + 1].isNotEmpty()) {
-                val candidate = words[i + 1].replace(Regex("[^a-zA-Z0-9]"), "")
-                if (candidate.isNotEmpty() && candidate.length > 2) {
-                    return candidate.replaceFirstChar { it.uppercase() }
+                val merchantWords = mutableListOf<String>()
+                var j = i + 1
+                while (j < words.size && merchantWords.size < 3) {
+                    val word = words[j].trim().replace(Regex("[^a-zA-Z0-9]"), "")
+                    if (word.isEmpty()) break
+                    if (word.all { it.isLowerCase() } && merchantWords.isNotEmpty()) break
+                    merchantWords.add(word.replaceFirstChar { it.uppercase() })
+                    j++
+                }
+                if (merchantWords.isNotEmpty()) {
+                    return merchantWords.joinToString(" ")
                 }
             }
         }
         return "Local Merchant"
+    }
+
+    /**
+     * Checks if the telecom SMS sender matches the user-configured sender,
+     * stripping special characters for maximum compatibility with carriers.
+     */
+    fun isSameSender(smsSender: String, configSender: String): Boolean {
+        val cleanSms = smsSender.replace(Regex("[^a-zA-Z0-9]"), "").lowercase()
+        val cleanConfig = configSender.replace(Regex("[^a-zA-Z0-9]"), "").lowercase()
+        return cleanSms.contains(cleanConfig) || cleanConfig.contains(cleanSms)
     }
 
     private fun truncateDescription(text: String): String {

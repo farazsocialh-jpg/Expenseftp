@@ -70,11 +70,11 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
         )
 
     // Selected SMS Sender configuration flow
-    val smsSenderSetting: StateFlow<String> = repository.getSettingFlow("selected_sms_sender", "HDFCBank")
+    val smsSenderSetting: StateFlow<String> = repository.getSettingFlow("selected_sms_sender", "Cb SMS")
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
-            initialValue = "HDFCBank"
+            initialValue = "Cb SMS"
         )
 
     // Preferred Currency flow, defaulting to QAR for Qatar
@@ -517,8 +517,8 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
                         
                         scannedCount++
                         
-                        // Check if the sender matches configured filter
-                        if (address.contains(sender, ignoreCase = true) || sender.contains(address, ignoreCase = true)) {
+                        // Check if the sender matches configured filter using robust helper
+                        if (SmsParser.isSameSender(address, sender)) {
                             // Inject automation rules into the live parsing pipeline!
                             val parsed = SmsParser.parseMessage(address, body, automationRulesSetting.value)
                             if (parsed != null && parsed.amount > 0.0) {
