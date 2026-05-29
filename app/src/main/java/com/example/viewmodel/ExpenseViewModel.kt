@@ -194,6 +194,76 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
     suspend fun restoreBackup(jsonString: String): Boolean {
         return repository.importBackupFromJson(jsonString)
     }
+
+    // Historical Device SMS Syncing
+    fun syncHistoricalSms(sender: String, onComplete: (scanned: Int, imported: Int) -> Unit) {
+        viewModelScope.launch {
+            var scannedCount = 0
+            var importedCount = 0
+            try {
+                val context = getApplication<Application>()
+                
+                // Double check runtime permission at service layer
+                val hasPermission = androidx.core.content.ContextCompat.checkSelfPermission(
+                    context, 
+                    android.Manifest.permission.READ_SMS
+                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                
+                if (!hasPermission) {
+                    onComplete(0, 0)
+                    return@launch
+                }
+
+                val uri = android.net.Uri.parse("content://sms/inbox")
+                val projection = arrayOf("_id", "address", "body", "date")
+                
+                context.contentResolver.query(uri, projection, null, null, "date DESC")?.use { cursor ->
+                    val addressIdx = cursor.getColumnIndex("address")
+                    val bodyIdx = cursor.getColumnIndex("body")
+                    val dateIdx = cursor.getColumnIndex("date")
+                    
+                    // Fetch existing descriptions inside database to prevent duplicate inserts
+                    val existingDescriptions = allTransactions.value.map { it.description }.toSet()
+                    
+                    while (cursor.moveToNext()) {
+                        val address = cursor.getString(addressIdx) ?: ""
+                        val body = cursor.getString(bodyIdx) ?: ""
+                        val date = cursor.getLong(dateIdx)
+                        
+                        scannedCount++
+                        
+                        // Check if the sender matches configured filter (contains check is accurate for shortcodes like 'AD-HDFCBK')
+                        if (address.contains(sender, ignoreCase = true) || sender.contains(address, ignoreCase = true)) {
+                            val parsed = SmsParser.parseMessage(address, body)
+                            if (parsed != null && parsed.amount > 0.0) {
+                                val finalDesc = "SMS Alert: ${parsed.description}"
+                                
+                                // Prevent saving if duplicates exist
+                                if (!existingDescriptions.contains(finalDesc)) {
+                                    repository.insertTransaction(
+                                        TransactionEntity(
+                                            amount = parsed.amount,
+                                            type = parsed.type,
+                                            category = parsed.category,
+                                            tag = parsed.tag,
+                                            description = finalDesc,
+                                            sender = address,
+                                            account = parsed.account,
+                                            timestamp = date
+                                        )
+                                    )
+                                    importedCount++
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            onComplete(scannedCount, importedCount)
+        }
+    }
 }
 
 // Extension to map repository to ViewModel safely

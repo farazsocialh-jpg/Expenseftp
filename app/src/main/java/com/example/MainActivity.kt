@@ -166,7 +166,7 @@ fun MainScreen(
                     selected = currentTab == 1,
                     onClick = { currentTab = 1 },
                     icon = { Icon(Icons.Default.Sms, contentDescription = "SMS Parser") },
-                    label = { Text("SMS Sim", fontSize = 10.sp, fontWeight = FontWeight.Bold) },
+                    label = { Text("SMS Reader", fontSize = 10.sp, fontWeight = FontWeight.Bold) },
                     modifier = Modifier.testTag("nav_sms_tab"),
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = MaterialTheme.colorScheme.primary,
@@ -962,6 +962,196 @@ fun TransactionRowItem(
 // ---------------- TAB 2: SMS SIMULATOR ----------------
 
 @Composable
+fun RealTimeSmsSyncCard(
+    viewModel: ExpenseViewModel,
+    selectedSender: String
+) {
+    val context = LocalContext.current
+    var hasSmsPermissions by remember {
+        mutableStateOf(
+            androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_SMS) == android.content.pm.PackageManager.PERMISSION_GRANTED &&
+            androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECEIVE_SMS) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        )
+    }
+
+    val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
+    ) { perms ->
+        val readGranted = perms[android.Manifest.permission.READ_SMS] ?: false
+        val receiveGranted = perms[android.Manifest.permission.RECEIVE_SMS] ?: false
+        hasSmsPermissions = readGranted && receiveGranted
+        if (hasSmsPermissions) {
+            Toast.makeText(context, "Live SMS sync activated!", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(context, "Sms permissions are required to scan real hardware messages.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    var isScanningSms by remember { mutableStateOf(false) }
+    var scanResult by remember { mutableStateOf<String?>(null) }
+    var editableSender by remember { mutableStateOf(selectedSender) }
+
+    LaunchedEffect(selectedSender) {
+        editableSender = selectedSender
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth().testTag("real_time_sms_card"),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.15f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f))
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = if (hasSmsPermissions) Icons.Default.CloudDone else Icons.Default.Sms,
+                        contentDescription = "Sync State Icon",
+                        tint = if (hasSmsPermissions) Color(0xFF2ECC71) else MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Text(
+                        text = "LIVE DEVICE SMS SYNC",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(if (hasSmsPermissions) Color(0xFFE8F8F5) else Color(0xFFFCE4D6))
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        text = if (hasSmsPermissions) "Active & Listening" else "Permission Required",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = if (hasSmsPermissions) Color(0xFF117A65) else Color(0xFFBA4A00),
+                        fontSize = 9.sp
+                    )
+                }
+            }
+
+            Text(
+                text = "Extract and parse transactions in real-time from incoming text alerts, or scan your older Inbox history using historical sync rules.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            if (!hasSmsPermissions) {
+                Button(
+                    onClick = {
+                        permissionLauncher.launch(
+                            arrayOf(
+                                android.Manifest.permission.READ_SMS,
+                                android.Manifest.permission.RECEIVE_SMS
+                            )
+                        )
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth().testTag("grant_sms_permission_btn"),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Icon(Icons.Default.VpnKey, contentDescription = "Security Unlock")
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Grant SMS Reading & Receiving Permissions", fontWeight = FontWeight.Bold)
+                }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    OutlinedTextField(
+                        value = editableSender,
+                        onValueChange = {
+                            editableSender = it
+                            viewModel.updateSmsSender(it)
+                        },
+                        label = { Text("Filter Sender ID") },
+                        placeholder = { Text("e.g. HDFCBank, CC-Chase") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f).testTag("sync_sender_input_field")
+                    )
+
+                    Button(
+                        onClick = {
+                            if (editableSender.trim().isEmpty()) {
+                                Toast.makeText(context, "Set a target Sender ID shortcode", Toast.LENGTH_SHORT).show()
+                                return@Button
+                            }
+                            isScanningSms = true
+                            scanResult = null
+                            viewModel.syncHistoricalSms(editableSender) { scanned, imported ->
+                                isScanningSms = false
+                                scanResult = "Scan ready: Analysed $scanned Messages. Imported $imported Transactions matching '$editableSender'."
+                            }
+                        },
+                        enabled = !isScanningSms,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.height(56.dp).testTag("scan_past_sms_btn"),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                    ) {
+                        if (isScanningSms) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Icon(Icons.Default.Sync, contentDescription = "Sync Now")
+                        }
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Scan Past SMS", fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                scanResult?.let { msg ->
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
+                            .border(BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)), RoundedCornerShape(12.dp))
+                            .padding(10.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Info,
+                                contentDescription = "Info icon",
+                                tint = MaterialTheme.colorScheme.secondary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = msg,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun SmsSimulatorTab(
     selectedSender: String,
     onSaveTransaction: (Double, String, String, String, String, String) -> Unit,
@@ -989,6 +1179,9 @@ fun SmsSimulatorTab(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        // Real-Time Device SMS configuration and control
+        RealTimeSmsSyncCard(viewModel = viewModel, selectedSender = selectedSender)
+
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(16.dp),
@@ -1004,7 +1197,7 @@ fun SmsSimulatorTab(
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "No real phone or SIM is required! Select a bank SMS template below, or write custom bank text to view how the rules automatically parse transactions.",
+                    text = "Write or paste any layout text to test parsing engines offline. Tap on any pre-loaded bank template below to populate standard text quickly.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
