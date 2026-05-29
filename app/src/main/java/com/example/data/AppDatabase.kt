@@ -37,88 +37,91 @@ abstract class AppDatabase : RoomDatabase() {
         ) : RoomDatabase.Callback() {
             override fun onCreate(db: SupportSQLiteDatabase) {
                 super.onCreate(db)
-                // Seed data on database creation
-                INSTANCE?.let { database ->
-                    CoroutineScope(Dispatchers.IO).launch {
-                        val transactionDao = database.transactionDao()
-                        val appSettingDao = database.appSettingDao()
+                // Seed data on database creation using the raw db object to prevent Room deadlocks!
+                db.beginTransaction()
+                try {
+                    // Default SMS sender setting
+                    db.execSQL("INSERT INTO app_settings (key, value) VALUES ('selected_sms_sender', 'HDFCBank')")
 
-                        // Default SMS sender setting
-                        appSettingDao.insertSetting(
-                            AppSettingEntity("selected_sms_sender", "HDFCBank")
-                        )
+                    // Seed transaction data
+                    val now = System.currentTimeMillis()
+                    val oneDayInMs = 24 * 60 * 60 * 1000L
 
-                        // Seed transaction data
-                        val now = System.currentTimeMillis()
-                        val oneDayInMs = 24 * 60 * 60 * 1000L
+                    // SQLite syntax for INSERT
+                    val insertSql = "INSERT INTO transactions (amount, type, category, tag, description, sender, account, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                    
+                    db.compileStatement(insertSql).use { statement ->
+                        // tx 1
+                        statement.bindDouble(1, 4200.0)
+                        statement.bindString(2, "CREDIT")
+                        statement.bindString(3, "Salary")
+                        statement.bindString(4, "paycheck")
+                        statement.bindString(5, "Monthly Salary Credited")
+                        statement.bindString(6, "Manual")
+                        statement.bindString(7, "Bank")
+                        statement.bindLong(8, now - 5 * oneDayInMs)
+                        statement.executeInsert()
 
-                        val seedTransactions = listOf(
-                            TransactionEntity(
-                                amount = 4200.0,
-                                type = "CREDIT",
-                                category = "Salary",
-                                tag = "paycheck",
-                                description = "Monthly Salary Credited",
-                                sender = "Manual",
-                                account = "Bank",
-                                timestamp = now - 5 * oneDayInMs
-                            ),
-                            TransactionEntity(
-                                amount = 45.50,
-                                type = "DEBIT",
-                                category = "Food",
-                                tag = "dining",
-                                description = "Dinner at Olive Garden",
-                                sender = "Manual",
-                                account = "Credit Card",
-                                timestamp = now - 4 * oneDayInMs
-                            ),
-                            TransactionEntity(
-                                amount = 15.75,
-                                type = "DEBIT",
-                                category = "Transport",
-                                tag = "rideshare",
-                                description = "Uber Ride to office",
-                                sender = "Manual",
-                                account = "Credit Card",
-                                timestamp = now - 3 * oneDayInMs
-                            ),
-                            TransactionEntity(
-                                amount = 120.00,
-                                type = "DEBIT",
-                                category = "Shopping",
-                                tag = "groceries",
-                                description = "Weekly Grocery shopping at Walmart",
-                                sender = "Manual",
-                                account = "Cash",
-                                timestamp = now - 2 * oneDayInMs
-                            ),
-                            TransactionEntity(
-                                amount = 350.00,
-                                type = "TRANSFER",
-                                category = "Rent/Bills",
-                                tag = "bank_transfer",
-                                description = "Sent money to savings account",
-                                sender = "Manual",
-                                account = "Bank",
-                                timestamp = now - 1 * oneDayInMs
-                            ),
-                            TransactionEntity(
-                                amount = 8.40,
-                                type = "DEBIT",
-                                category = "Food",
-                                tag = "coffee",
-                                description = "Starbucks latte",
-                                sender = "Manual",
-                                account = "Cash",
-                                timestamp = now - 12 * 60 * 60 * 1000L // 12 hours ago
-                            )
-                        )
+                        // tx 2
+                        statement.bindDouble(1, 45.50)
+                        statement.bindString(2, "DEBIT")
+                        statement.bindString(3, "Food")
+                        statement.bindString(4, "dining")
+                        statement.bindString(5, "Dinner at Olive Garden")
+                        statement.bindString(6, "Manual")
+                        statement.bindString(7, "Credit Card")
+                        statement.bindLong(8, now - 4 * oneDayInMs)
+                        statement.executeInsert()
 
-                        for (tx in seedTransactions) {
-                            transactionDao.insertTransaction(tx)
-                        }
+                        // tx 3
+                        statement.bindDouble(1, 15.75)
+                        statement.bindString(2, "DEBIT")
+                        statement.bindString(3, "Transport")
+                        statement.bindString(4, "rideshare")
+                        statement.bindString(5, "Uber Ride to office")
+                        statement.bindString(6, "Manual")
+                        statement.bindString(7, "Credit Card")
+                        statement.bindLong(8, now - 3 * oneDayInMs)
+                        statement.executeInsert()
+
+                        // tx 4
+                        statement.bindDouble(1, 120.00)
+                        statement.bindString(2, "DEBIT")
+                        statement.bindString(3, "Shopping")
+                        statement.bindString(4, "groceries")
+                        statement.bindString(5, "Weekly Grocery shopping at Walmart")
+                        statement.bindString(6, "Manual")
+                        statement.bindString(7, "Cash")
+                        statement.bindLong(8, now - 2 * oneDayInMs)
+                        statement.executeInsert()
+
+                        // tx 5
+                        statement.bindDouble(1, 350.00)
+                        statement.bindString(2, "TRANSFER")
+                        statement.bindString(3, "Rent/Bills")
+                        statement.bindString(4, "bank_transfer")
+                        statement.bindString(5, "Sent money to savings account")
+                        statement.bindString(6, "Manual")
+                        statement.bindString(7, "Bank")
+                        statement.bindLong(8, now - 1 * oneDayInMs)
+                        statement.executeInsert()
+
+                        // tx 6
+                        statement.bindDouble(1, 8.40)
+                        statement.bindString(2, "DEBIT")
+                        statement.bindString(3, "Food")
+                        statement.bindString(4, "coffee")
+                        statement.bindString(5, "Starbucks latte")
+                        statement.bindString(6, "Manual")
+                        statement.bindString(7, "Cash")
+                        statement.bindLong(8, now - 12 * 60 * 60 * 1000L)
+                        statement.executeInsert()
                     }
+                    db.setTransactionSuccessful()
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                } finally {
+                    db.endTransaction()
                 }
             }
         }

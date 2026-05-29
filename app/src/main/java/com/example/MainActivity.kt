@@ -6,8 +6,10 @@ import android.content.Context
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
@@ -18,7 +20,6 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -41,6 +42,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -55,10 +57,12 @@ import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.TransactionEntity
 import com.example.ui.theme.MyApplicationTheme
+import com.example.util.CustomRule
 import com.example.util.ParsedSmsTransaction
 import com.example.util.SmsParser
 import com.example.viewmodel.AiSuggestionState
 import com.example.viewmodel.ExpenseViewModel
+import com.example.viewmodel.FinancialBudget
 import kotlinx.coroutines.launch
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
@@ -73,7 +77,10 @@ class MainActivity : ComponentActivity() {
         setContent {
             MyApplicationTheme {
                 Scaffold(
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier.fillMaxSize(),
+                    bottomBar = {
+                        // Embedded in MainScreen to keep tab state unified
+                    }
                 ) { innerPadding ->
                     MainScreen(
                         viewModel = viewModel,
@@ -90,7 +97,8 @@ fun MainScreen(
     viewModel: ExpenseViewModel,
     modifier: Modifier = Modifier
 ) {
-    var currentTab by remember { mutableStateOf(0) } // 0: Ledger, 1: Parser SIM, 2: Analytics, 3: Settings
+    // 5-Tab Architecture: 0: Home (Dashboard), 1: Transactions, 2: Budgets, 3: Insights (Analytics), 4: Settings
+    var currentTab by remember { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
@@ -106,861 +114,734 @@ fun MainScreen(
         color = MaterialTheme.colorScheme.background
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // "Sleek Interface" Top App Header
+            
+            // Premium Global Fintech App Bar Header
             AppHeader(
-                appName = "Expenses",
+                appName = "FinOperatingSystem",
                 selectedSender = selectedSmsSender,
-                onUpdateSender = { viewModel.updateSmsSender(it) }
+                onUpdateSender = { viewModel.updateSmsSender(it) },
+                currentTab = currentTab
             )
 
-            // Content body switching based on Selected Bottom Navigation Tab
+            // Dynamic view loading depending on selected bottom navigation tab
             Box(
                 modifier = Modifier
                     .weight(1.0f)
                     .fillMaxWidth()
             ) {
                 when (currentTab) {
-                    0 -> LedgerTab(
+                    0 -> DashboardTab(
+                        viewModel = viewModel,
+                        allTransactions = allTransactionsRaw,
+                        onAddClick = { showAddDialog = true },
+                        onNavigateToParser = { currentTab = 1 },
+                        onNavigateToBudgets = { currentTab = 2 }
+                    )
+                    1 -> TransactionsTab(
+                        viewModel = viewModel,
                         transactions = transactions,
                         onAddClick = { showAddDialog = true },
                         onEditClick = { editTransactionTarget = it },
-                        onDeleteClick = { viewModel.deleteTransaction(it) },
-                        onTrySimClick = { currentTab = 1 },
+                        onDeleteClick = { viewModel.deleteTransaction(it) }
+                    )
+                    2 -> BudgetsTab(
                         viewModel = viewModel
                     )
-                    1 -> SmsSimulatorTab(
-                        selectedSender = selectedSmsSender,
-                        onSaveTransaction = { amount, type, cat, tag, desc, acc ->
-                            viewModel.addTransaction(amount, type, cat, tag, desc, acc)
-                        },
-                        viewModel = viewModel
+                    3 -> AnalyticsTab(
+                        transactions = allTransactionsRaw
                     )
-                    2 -> AnalyticsTab(transactions = allTransactionsRaw)
-                    3 -> BackupSettingsTab(
+                    4 -> SettingsTab(
                         viewModel = viewModel,
-                        onClearAll = { viewModel.clearAllTransactions() },
                         allTransactions = allTransactionsRaw
                     )
                 }
             }
 
-            // Custom styled Sleek M3 Navigation Bar at the Bottom
+            // High-fidelity Custom Styled Underlined Bottom Navigation Panel
             NavigationBar(
                 modifier = Modifier.testTag("main_navigation_bar"),
-                containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                tonalElevation = 0.dp
+                containerColor = MaterialTheme.colorScheme.surface,
+                tonalElevation = 8.dp
             ) {
                 NavigationBarItem(
                     selected = currentTab == 0,
                     onClick = { currentTab = 0 },
-                    icon = { Icon(Icons.Default.AccountBalanceWallet, contentDescription = "Ledger") },
+                    icon = { Icon(Icons.Default.Dashboard, contentDescription = "Dashboard") },
                     label = { Text("Home", fontSize = 10.sp, fontWeight = FontWeight.Bold) },
-                    modifier = Modifier.testTag("nav_ledger_tab"),
+                    modifier = Modifier.testTag("nav_home_tab"),
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = MaterialTheme.colorScheme.primary,
-                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                         indicatorColor = MaterialTheme.colorScheme.primaryContainer
                     )
                 )
                 NavigationBarItem(
                     selected = currentTab == 1,
                     onClick = { currentTab = 1 },
-                    icon = { Icon(Icons.Default.Sms, contentDescription = "SMS Parser") },
-                    label = { Text("SMS Reader", fontSize = 10.sp, fontWeight = FontWeight.Bold) },
-                    modifier = Modifier.testTag("nav_sms_tab"),
+                    icon = { Icon(Icons.Default.ReceiptLong, contentDescription = "Ledger") },
+                    label = { Text("Ledger", fontSize = 10.sp, fontWeight = FontWeight.Bold) },
+                    modifier = Modifier.testTag("nav_ledger_tab"),
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = MaterialTheme.colorScheme.primary,
-                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                         indicatorColor = MaterialTheme.colorScheme.primaryContainer
                     )
                 )
                 NavigationBarItem(
                     selected = currentTab == 2,
                     onClick = { currentTab = 2 },
-                    icon = { Icon(Icons.Default.PieChart, contentDescription = "Analytics") },
-                    label = { Text("Insights", fontSize = 10.sp, fontWeight = FontWeight.Bold) },
-                    modifier = Modifier.testTag("nav_analytics_tab"),
+                    icon = { Icon(Icons.Default.Task, contentDescription = "Budgets") },
+                    label = { Text("Budgets", fontSize = 10.sp, fontWeight = FontWeight.Bold) },
+                    modifier = Modifier.testTag("nav_budgets_tab"),
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = MaterialTheme.colorScheme.primary,
-                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                         indicatorColor = MaterialTheme.colorScheme.primaryContainer
                     )
                 )
                 NavigationBarItem(
                     selected = currentTab == 3,
                     onClick = { currentTab = 3 },
-                    icon = { Icon(Icons.Default.SettingsBackupRestore, contentDescription = "Backup") },
-                    label = { Text("Banks & Config", fontSize = 10.sp, fontWeight = FontWeight.Bold) },
-                    modifier = Modifier.testTag("nav_backup_tab"),
+                    icon = { Icon(Icons.Default.PieChart, contentDescription = "Analytics") },
+                    label = { Text("Insights", fontSize = 10.sp, fontWeight = FontWeight.Bold) },
+                    modifier = Modifier.testTag("nav_insights_tab"),
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = MaterialTheme.colorScheme.primary,
-                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                        indicatorColor = MaterialTheme.colorScheme.primaryContainer
+                    )
+                )
+                NavigationBarItem(
+                    selected = currentTab == 4,
+                    onClick = { currentTab = 4 },
+                    icon = { Icon(Icons.Default.Settings, contentDescription = "Settings") },
+                    label = { Text("Settings", fontSize = 10.sp, fontWeight = FontWeight.Bold) },
+                    modifier = Modifier.testTag("nav_settings_tab"),
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = MaterialTheme.colorScheme.primary,
+                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                         indicatorColor = MaterialTheme.colorScheme.primaryContainer
                     )
                 )
             }
         }
-    }
 
-    // Modal Dialog to Add manually
-    if (showAddDialog) {
-        TransactionFormDialog(
-            title = "Add Transaction",
-            onDismiss = { showAddDialog = false },
-            onSave = { amount, type, category, tag, description, account, timestamp ->
-                viewModel.addTransaction(amount, type, category, tag, description, account, timestamp)
-                showAddDialog = false
-            },
-            viewModel = viewModel
-        )
-    }
+        // Add Transaction Modal Dialog
+        if (showAddDialog) {
+            TransactionFormDialog(
+                title = "Log Transaction",
+                onDismiss = { showAddDialog = false },
+                onSave = { amount, type, category, tag, description, account, timestamp ->
+                    viewModel.addTransaction(amount, type, category, tag, description, account, timestamp)
+                    showAddDialog = false
+                },
+                viewModel = viewModel
+            )
+        }
 
-    // Modal Dialog to Edit
-    if (editTransactionTarget != null) {
-        TransactionFormDialog(
-            title = "Edit Transaction",
-            transaction = editTransactionTarget,
-            onDismiss = { editTransactionTarget = null },
-            onSave = { amount, type, category, tag, description, account, timestamp ->
-                viewModel.updateTransaction(
-                    editTransactionTarget!!.id,
-                    amount, type, category, tag, description, account, timestamp
-                )
-                editTransactionTarget = null
-            },
-            viewModel = viewModel
-        )
+        // Edit Transaction Modal Dialog
+        if (editTransactionTarget != null) {
+            TransactionFormDialog(
+                title = "Modify Transaction Info",
+                transaction = editTransactionTarget,
+                onDismiss = { editTransactionTarget = null },
+                onSave = { amount, type, category, tag, description, account, timestamp ->
+                    viewModel.updateTransaction(
+                        editTransactionTarget!!.id,
+                        amount, type, category, tag, description, account, timestamp
+                    )
+                    editTransactionTarget = null
+                },
+                viewModel = viewModel
+            )
+        }
     }
 }
 
-// ---------------- APP HEADER ----------------
-
+// ---------------- GLOBAL FINTECH HEADER BAR ----------------
 @Composable
 fun AppHeader(
     appName: String,
     selectedSender: String,
-    onUpdateSender: (String) -> Unit
+    onUpdateSender: (String) -> Unit,
+    currentTab: Int
 ) {
-    var showSenderDialog by remember { mutableStateOf(false) }
-
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .statusBarsPadding()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .background(MaterialTheme.colorScheme.surface)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // Elegant circular budget logo mimicking the HTML mockup design
             Box(
                 modifier = Modifier
-                    .size(40.dp)
-                    .background(MaterialTheme.colorScheme.primaryContainer, CircleShape),
+                    .size(36.dp)
+                    .background(
+                        brush = Brush.radialGradient(
+                            colors = listOf(
+                                MaterialTheme.colorScheme.primaryContainer,
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+                            )
+                        ),
+                        shape = CircleShape
+                    ),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     Icons.Default.AccountBalanceWallet,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(18.dp)
                 )
             }
             Column {
                 Text(
                     text = appName,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.ExtraBold,
                     color = MaterialTheme.colorScheme.onBackground
                 )
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    modifier = Modifier.padding(top = 2.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(6.dp)
-                            .background(Color(0xFF2ECC71), CircleShape)
-                    )
-                    Text(
-                        text = "Local DB • Synced",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                        fontSize = 10.sp
-                    )
-                }
-            }
-        }
-
-        // Action controls (SMS active shortcode filter)
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .clickable { showSenderDialog = true }
-                    .padding(horizontal = 12.dp, vertical = 6.dp)
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Icon(
-                        Icons.Default.FilterList,
-                        contentDescription = "Sender Filter",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(12.dp)
-                    )
-                    Text(
-                        text = "SMS: $selectedSender",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 10.sp
-                    )
-                }
-            }
-
-            IconButton(
-                onClick = { /* Visual sync trigger */ },
-                modifier = Modifier.size(36.dp)
-            ) {
-                Icon(
-                    Icons.Default.CloudDone,
-                    contentDescription = "Cloud Synced",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(20.dp)
+                Text(
+                    text = when (currentTab) {
+                        0 -> "Personal Finance Headquarters"
+                        1 -> "Immutable Double-Entry Ledger"
+                        2 -> "Category Limit Strategy"
+                        3 -> "Advanced Canvas Analytics"
+                        else -> "System Rules & Configuration"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 9.sp
                 )
             }
         }
-    }
 
-    if (showSenderDialog) {
-        var tempSender by remember { mutableStateOf(selectedSender) }
-
-        AlertDialog(
-            onDismissRequest = { showSenderDialog = false },
-            title = { Text("Selected SMS Sender") },
-            text = {
-                Column {
-                    Text(
-                        text = "The application will parse incoming simulated transaction alerts that match this sender code.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(bottom = 12.dp)
-                    )
-                    OutlinedTextField(
-                        value = tempSender,
-                        onValueChange = { tempSender = it },
-                        label = { Text("Sender ID / Shortcode") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth().testTag("sms_sender_input")
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        onUpdateSender(tempSender)
-                        showSenderDialog = false
-                    },
-                    modifier = Modifier.testTag("save_sender_button")
-                ) {
-                    Text("Save")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showSenderDialog = false }) {
-                    Text("Cancel")
-                }
-            }
-        )
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(30.dp))
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))
+                .padding(horizontal = 10.dp, vertical = 5.dp)
+        ) {
+            Text(
+                text = "Offline Secured",
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                fontSize = 10.sp
+            )
+        }
     }
 }
 
-// ---------------- TAB 1: LEDGER ----------------
-
+// ==========================================
+// 1. DASHBOARD TAB (HOME VIEW)
+// ==========================================
 @Composable
-fun LedgerTab(
+fun DashboardTab(
+    viewModel: ExpenseViewModel,
+    allTransactions: List<TransactionEntity>,
+    onAddClick: () -> Unit,
+    onNavigateToParser: () -> Unit,
+    onNavigateToBudgets: () -> Unit
+) {
+    val healthScore by viewModel.financialHealthScore.collectAsStateWithLifecycle()
+    val budgetsStatus by viewModel.budgetStatuses.collectAsStateWithLifecycle()
+
+    val totalIncome = allTransactions.filter { it.type == "CREDIT" }.sumOf { it.amount }
+    val totalExpense = allTransactions.filter { it.type == "DEBIT" }.sumOf { it.amount }
+    val netWorth = totalIncome - totalExpense
+
+    // Account level Aggregations
+    val cashCredits = allTransactions.filter { it.account == "Cash" && it.type == "CREDIT" }.sumOf { it.amount }
+    val cashDebits = allTransactions.filter { it.account == "Cash" && it.type == "DEBIT" }.sumOf { it.amount }
+    val cashBalance = cashCredits - cashDebits
+
+    val bankCredits = allTransactions.filter { it.account == "Bank" && it.type == "CREDIT" }.sumOf { it.amount }
+    val bankDebits = allTransactions.filter { it.account == "Bank" && it.type == "DEBIT" }.sumOf { it.amount }
+    val bankBalance = bankCredits - bankDebits
+
+    val ccCredits = allTransactions.filter { it.account == "Credit Card" && it.type == "CREDIT" }.sumOf { it.amount }
+    val ccDebits = allTransactions.filter { it.account == "Credit Card" && it.type == "DEBIT" }.sumOf { it.amount }
+    val ccBalanceOwed = ccDebits - ccCredits // Owed is Debits minus paid back credits
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        
+        // Custom Dashboard Banner with Welcoming details
+        Text(
+            text = "FINANCIAL SUMMARY DASHBOARD",
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.ExtraBold,
+            color = MaterialTheme.colorScheme.primary,
+            letterSpacing = 1.1.sp
+        )
+
+        // Triple Gradient Liquidity/Wallet Account Cards (Horizontal Row of Wallets)
+        Text(
+            text = "Active Wallets & Balances",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onBackground
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            // Card 1: Bank Balance
+            Card(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(115.dp),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.15f)),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f))
+            ) {
+                Column(
+                    modifier = Modifier
+                        .padding(12.dp)
+                        .fillMaxSize(),
+                    verticalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.AccountBalance, contentDescription = "Bank", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                        Text("SAVINGS", fontSize = 8.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                    }
+                    Column {
+                        Text("Bank Vault", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(formatCurrency(bankBalance), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onSurface)
+                    }
+                }
+            }
+
+            // Card 2: Cash Drawer
+            Card(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(115.dp),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.15f)),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.tertiary.copy(alpha = 0.25f))
+            ) {
+                Column(
+                    modifier = Modifier
+                        .padding(12.dp)
+                        .fillMaxSize(),
+                    verticalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.LocalAtm, contentDescription = "Cash", tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(18.dp))
+                        Text("LIQUID", fontSize = 8.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.tertiary)
+                    }
+                    Column {
+                        Text("Cash Wallet", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(formatCurrency(cashBalance), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onSurface)
+                    }
+                }
+            }
+
+            // Card 3: Credit Card Owed
+            Card(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(115.dp),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (ccBalanceOwed > 1000) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.15f) 
+                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
+                ),
+                border = BorderStroke(1.dp, if (ccBalanceOwed > 1000) MaterialTheme.colorScheme.error.copy(alpha = 0.25f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+            ) {
+                Column(
+                    modifier = Modifier
+                        .padding(12.dp)
+                        .fillMaxSize(),
+                    verticalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.CreditCard, contentDescription = "CC", tint = if (ccBalanceOwed > 1000) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary, modifier = Modifier.size(18.dp))
+                        Text("DEBT", fontSize = 8.sp, fontWeight = FontWeight.Bold, color = if (ccBalanceOwed > 1000) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Column {
+                        Text("Credit Owed", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(formatCurrency(ccBalanceOwed), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold, color = if (ccBalanceOwed > 1000) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
+                    }
+                }
+            }
+        }
+
+        // Dynamic Circular Financial Health Indicator Card
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+        ) {
+            Row(
+                modifier = Modifier.padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                // Interactive dynamic health radial visualizer
+                Box(
+                    modifier = Modifier.size(80.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        drawCircle(
+                            color = Color.LightGray.copy(alpha = 0.3f),
+                            radius = size.minDimension / 2,
+                            style = Stroke(width = 8.dp.toPx())
+                        )
+                        drawArc(
+                            color = when {
+                                healthScore >= 80 -> Color(0xFF2ECC71) // Green
+                                healthScore >= 55 -> Color(0xFFF1C40F) // Amber
+                                else -> Color(0xFFE74C3C) // Red
+                            },
+                            startAngle = -90f,
+                            sweepAngle = (healthScore / 100f) * 360f,
+                            useCenter = false,
+                            style = Stroke(width = 8.dp.toPx(), cap = StrokeCap.Round)
+                        )
+                    }
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = healthScore.toString(),
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = MaterialTheme.colorScheme.onBackground
+                        )
+                        Text("INDEX", fontSize = 8.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "HEALTH SCORE EVALUATION",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        letterSpacing = 1.sp
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = when {
+                            healthScore >= 80 -> "Premium Cashflow Posture. Excellent savings percentage, minimal debt liability, and safe category budgeting."
+                            healthScore >= 55 -> "Moderate Health Posture. Budget thresholds are maintained, but savings ratios can be strengthened."
+                            else -> "Alert Indicator. Spending exceeds income velocity or high overspent budget alerts require mediation."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+
+        // Net Worth and Aggregates Header Card (SaaS Style)
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.08f)),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("AGGREGATE NET WORTH", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        Text(
+                            text = formatCurrency(netWorth),
+                            style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.Black,
+                            color = if (netWorth >= 0) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.error
+                        )
+                    }
+                    Button(
+                        onClick = onAddClick,
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = "Add")
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Add Tx", fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Box(modifier = Modifier.size(6.dp).background(Color(0xFF2ECC71), CircleShape))
+                            Text("30D Credits", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Text(formatCurrency(totalIncome), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color(0xFF27AE60))
+                    }
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Box(modifier = Modifier.size(6.dp).background(Color(0xFFE74C3C), CircleShape))
+                            Text("30D Debits", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Text(formatCurrency(totalExpense), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color(0xFFC0392B))
+                    }
+                    Column {
+                        Text("30D Savings Rate", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        val rateFraction = if (totalIncome > 0) (totalIncome - totalExpense) / totalIncome else 0.0
+                        val ratePct = (rateFraction * 100).toInt().coerceAtLeast(0)
+                        Text("$ratePct%", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                    }
+                }
+            }
+        }
+
+        // Instant Alerts and Critical Budget Signals
+        val overspendAlerts = budgetsStatus.filter { it.overspent }
+        if (overspendAlerts.isNotEmpty()) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f)),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.3f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(Icons.Default.Warning, contentDescription = "Alert", tint = MaterialTheme.colorScheme.error)
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("BUDGET DEFICIT WARNING", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
+                        Text(
+                            text = "You have ${overspendAlerts.size} overspent categories. Total overspending: ${formatCurrency(overspendAlerts.sumOf { it.spent - it.limit })}.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    }
+                    TextButton(onClick = onNavigateToBudgets) {
+                        Text("Mitigate", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            }
+        }
+
+        // Live AI Advice Panel
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.15f)),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.22f))
+        ) {
+            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(Icons.Default.Psychology, contentDescription = "AI Advice", tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(20.dp))
+                    Text("AI FORECAST & INSIGHT", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onSurface)
+                }
+                Text(
+                    text = when {
+                        allTransactions.isEmpty() -> "The local parsing and modeling engine is primed. Log transactions manually or scan elder device SMS SMS cards to evaluate financial recommendations."
+                        totalExpense > totalIncome -> "Outflows exceed monthly income. We recommend pausing discretionary Shopping or Entertainment expenditures immediately to avoid net liquidity degradation."
+                        overspendAlerts.isNotEmpty() -> "Discretionary category caps are exceeded. We forecast exhaustion of remaining miscellaneous buffers in less than 5 days based on your current velocity."
+                        else -> "Excellent financial hygiene. Net worth is progressing upward at a stable savings coefficient. Continue maintaining current budget rules."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+// ==========================================
+// 2. TRANSACTIONS TAB (TRANSACTION MANAGER & SMS SYNC)
+// ==========================================
+@Composable
+fun TransactionsTab(
+    viewModel: ExpenseViewModel,
     transactions: List<TransactionEntity>,
     onAddClick: () -> Unit,
     onEditClick: (TransactionEntity) -> Unit,
-    onDeleteClick: (TransactionEntity) -> Unit,
-    onTrySimClick: () -> Unit,
-    viewModel: ExpenseViewModel
+    onDeleteClick: (TransactionEntity) -> Unit
 ) {
-    val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
-    val selectedType by viewModel.selectedTypeFilter.collectAsStateWithLifecycle()
-    val selectedCategory by viewModel.selectedCategoryFilter.collectAsStateWithLifecycle()
-
-    val totalIncome = transactions.filter { it.type == "CREDIT" }.sumOf { it.amount }
-    val totalExpense = transactions.filter { it.type == "DEBIT" }.sumOf { it.amount }
-    val netBalance = totalIncome - totalExpense
-
+    val context = LocalContext.current
+    var query by remember { mutableStateOf("") }
+    val selType by viewModel.selectedTypeFilter.collectAsStateWithLifecycle()
+    val selCat by viewModel.selectedCategoryFilter.collectAsStateWithLifecycle()
+    val customCategories by viewModel.customCategoriesSetting.collectAsStateWithLifecycle()
     val selectedSmsSender by viewModel.smsSenderSetting.collectAsStateWithLifecycle()
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            // Elegant primary calculation board
-            SummaryCard(netBalance, totalIncome, totalExpense)
-
-            // SMS Parser Active Alert Banner based on mock theme
-            SmartSmsAlert(selectedSmsSender, onTrySimClick)
-
-            // Beautifully integrated minimal search text field
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { viewModel.setSearchQuery(it) },
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search", tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)) },
-                placeholder = { Text("Search description, category, tags...") },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 6.dp)
-                    .testTag("transaction_search_input"),
-                singleLine = true,
-                shape = RoundedCornerShape(12.dp),
-                colors = TextFieldDefaults.colors(
-                    unfocusedContainerColor = MaterialTheme.colorScheme.surface,
-                    focusedContainerColor = MaterialTheme.colorScheme.surface,
-                    unfocusedIndicatorColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
-                    focusedIndicatorColor = MaterialTheme.colorScheme.primary
-                )
-            )
-
-            // Dynamic filter options row spacing
-            FilterChipsRow(
-                selectedType = selectedType,
-                onTypeSelect = { viewModel.setTypeFilter(it) },
-                selectedCategory = selectedCategory,
-                onCategorySelect = { viewModel.setCategoryFilter(it) }
-            )
-
-            // List or empty state
-            if (transactions.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1.0f),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.padding(24.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.AccountBalanceWallet,
-                            contentDescription = "No transactions",
-                            tint = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
-                            modifier = Modifier.size(64.dp)
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text(
-                            text = "No Transactions Found",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "Add a manual entry or paste a mock transaction in the SMS Parser tab to populate your dashboard.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(horizontal = 16.dp)
-                        )
-                    }
-                }
-            } else {
-                LazyColumn(
-                    modifier = Modifier
-                        .weight(1.0f)
-                        .fillMaxWidth(),
-                    contentPadding = PaddingValues(top = 4.dp, bottom = 80.dp)
-                ) {
-                    items(transactions, key = { it.id }) { tx ->
-                        TransactionRowItem(
-                            transaction = tx,
-                            onClick = { onEditClick(tx) },
-                            onDelete = { onDeleteClick(tx) }
-                        )
-                    }
-                }
-            }
-        }
-
-        // Premium design compliant floating action button
-        LargeFloatingActionButton(
-            onClick = { onAddClick() },
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(24.dp)
-                .testTag("add_transaction_fab"),
-            containerColor = MaterialTheme.colorScheme.primaryContainer,
-            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-            shape = RoundedCornerShape(16.dp)
-        ) {
-            Icon(Icons.Default.Add, contentDescription = "Add Receipt", modifier = Modifier.size(28.dp))
-        }
-    }
-}
-
-// ---------------- SMART SMS ALERT BANNER ----------------
-
-@Composable
-fun SmartSmsAlert(selectedSender: String, onTrySimClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(16.dp))
-                .border(BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)), RoundedCornerShape(16.dp))
-                .padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(34.dp)
-                    .background(MaterialTheme.colorScheme.secondary, RoundedCornerShape(10.dp)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    Icons.Default.Sms,
-                    contentDescription = "SMS Alert icon",
-                    tint = MaterialTheme.colorScheme.onSecondary,
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "New SMS from BANK-$selectedSender",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer
-                )
-                Text(
-                    text = "Debited: $45.00 @ Starbucks",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f),
-                    fontSize = 10.sp
-                )
-            }
-            Button(
-                onClick = onTrySimClick,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    contentColor = MaterialTheme.colorScheme.secondary
-                ),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp),
-                modifier = Modifier.height(28.dp)
-            ) {
-                Text("Review", fontSize = 10.sp, fontWeight = FontWeight.Bold)
-            }
-        }
-    }
-}
-
-// ---------------- BALANCE GRAPH CARD ----------------
-
-@Composable
-fun SummaryCard(
-    balance: Double,
-    income: Double,
-    expenses: Double
-) {
-    val isDark = isSystemInDarkTheme()
-    // Solid navy backgrounds for the primary board block matching "Sleek Interface" requirements perfectly
-    val containerColor = if (!isDark) Color(0xFF001D35) else MaterialTheme.colorScheme.surfaceVariant
-    val textColor = if (!isDark) Color.White else MaterialTheme.colorScheme.onSurface
-
-    val currentMonthYear = remember {
-        val sdf = SimpleDateFormat("MMM yyyy", Locale.US)
-        sdf.format(Date()).uppercase()
-    }
-
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = containerColor
-        ),
-        shape = RoundedCornerShape(28.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-    ) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        
+        // 1. Double Filter Controls (Search + Dynamic filters)
         Column(
             modifier = Modifier
-                .padding(24.dp)
                 .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surface)
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "TOTAL BALANCE",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = textColor.copy(alpha = 0.7f),
-                    letterSpacing = 1.sp
-                )
-                Box(
-                    modifier = Modifier
-                        .background(textColor.copy(alpha = 0.12f), RoundedCornerShape(20.dp))
-                        .padding(horizontal = 10.dp, vertical = 4.dp)
-                ) {
-                    Text(
-                        text = currentMonthYear,
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = textColor,
-                        fontSize = 10.sp
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(6.dp))
-
-            Text(
-                text = formatCurrency(balance),
-                style = MaterialTheme.typography.headlineLarge,
-                fontWeight = FontWeight.Light,
-                color = textColor,
-                fontSize = 36.sp
+            // Expanded Search Text Field
+            OutlinedTextField(
+                value = query,
+                onValueChange = {
+                    query = it
+                    viewModel.setSearchQuery(it)
+                },
+                placeholder = { Text("Search merchant or category...") },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search") },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("ledger_search_field")
             )
 
-            Spacer(modifier = Modifier.height(24.dp))
-
+            // Dynamic Row of Flow Segment Filters (ALL / DEBIT / CREDIT / TRANSFER)
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                // Inflow panel matching mockup
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .background(textColor.copy(alpha = 0.05f), RoundedCornerShape(16.dp))
-                        .padding(12.dp)
-                ) {
-                    Text(
-                        text = "INFLOW",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = textColor.copy(alpha = 0.6f),
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.5.sp
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "+" + formatCurrency(income),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF4ADE80)
-                    )
-                }
-
-                // Outflow panel matching mockup
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .background(textColor.copy(alpha = 0.05f), RoundedCornerShape(16.dp))
-                        .padding(12.dp)
-                ) {
-                    Text(
-                        text = "OUTFLOW",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = textColor.copy(alpha = 0.6f),
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.5.sp
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "-" + formatCurrency(expenses),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFFFCA5A5)
-                    )
-                }
-            }
-        }
-    }
-}
-
-// ---------------- CHIP FILTERS ROW ----------------
-
-@Composable
-fun FilterChipsRow(
-    selectedType: String,
-    onTypeSelect: (String) -> Unit,
-    selectedCategory: String,
-    onCategorySelect: (String) -> Unit
-) {
-    val types = listOf("ALL", "DEBIT", "CREDIT", "TRANSFER")
-    val categories = listOf("ALL", "Food", "Salary", "Rent/Bills", "Shopping", "Transport", "Entertainment", "Health", "Investment", "Other")
-
-    Column(modifier = Modifier.padding(vertical = 4.dp)) {
-        // Types Selector
-        LazyRow(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            contentPadding = PaddingValues(vertical = 2.dp)
-        ) {
-            items(types) { t ->
-                val isSelected = selectedType == t
-                FilterChip(
-                    selected = isSelected,
-                    onClick = { onTypeSelect(t) },
-                    label = { Text(t, fontSize = 11.sp, fontWeight = FontWeight.Bold) },
-                    shape = RoundedCornerShape(8.dp),
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = MaterialTheme.colorScheme.primary,
-                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
-                        containerColor = MaterialTheme.colorScheme.surface,
-                        labelColor = MaterialTheme.colorScheme.onSurfaceVariant
-                    ),
-                    border = FilterChipDefaults.filterChipBorder(
-                        enabled = true,
-                        selected = isSelected,
-                        borderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
-                        selectedBorderColor = Color.Transparent
-                    ),
-                    modifier = Modifier.testTag("filter_type_$t")
-                )
-            }
-        }
-
-        // Categories Selector
-        LazyRow(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            contentPadding = PaddingValues(vertical = 2.dp)
-        ) {
-            items(categories) { c ->
-                val isSelected = selectedCategory == c
-                FilterChip(
-                    selected = isSelected,
-                    onClick = { onCategorySelect(c) },
-                    label = { Text(c, fontSize = 11.sp, fontWeight = FontWeight.Medium) },
-                    shape = RoundedCornerShape(8.dp),
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = MaterialTheme.colorScheme.secondary,
-                        selectedLabelColor = MaterialTheme.colorScheme.onSecondary,
-                        containerColor = MaterialTheme.colorScheme.surface,
-                        labelColor = MaterialTheme.colorScheme.onSurfaceVariant
-                    ),
-                    border = FilterChipDefaults.filterChipBorder(
-                        enabled = true,
-                        selected = isSelected,
-                        borderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
-                        selectedBorderColor = Color.Transparent
-                    ),
-                    modifier = Modifier.testTag("filter_category_$c")
-                )
-            }
-        }
-    }
-}
-
-// ---------------- TRANSACTION ITEM CARD ----------------
-
-@Composable
-fun TransactionRowItem(
-    transaction: TransactionEntity,
-    onClick: () -> Unit,
-    onDelete: () -> Unit
-) {
-    val sdf = SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault())
-    val formattedDate = sdf.format(Date(transaction.timestamp))
-
-    val isDark = isSystemInDarkTheme()
-
-    // Setup beautiful high contrast style colors based on type
-    val typeColor: Color
-    val prefix: String
-    val iconBg: Color
-    val iconColor: Color
-
-    when (transaction.type) {
-        "CREDIT" -> {
-            typeColor = if (isDark) Color(0xFF4ADE80) else Color(0xFF2E7D32)
-            prefix = "+"
-            iconBg = if (isDark) Color(0xFF132F1A) else Color(0xFFE8F5E9)
-            iconColor = typeColor
-        }
-        "DEBIT" -> {
-            typeColor = if (isDark) Color(0xFFF87171) else Color(0xFFC62828)
-            prefix = "-"
-            iconBg = if (isDark) Color(0xFF3B1E1E) else Color(0xFFFFEBEE)
-            iconColor = typeColor
-        }
-        else -> {
-            typeColor = if (isDark) Color(0xFF60A5FA) else Color(0xFF1565C0)
-            prefix = ""
-            iconBg = if (isDark) Color(0xFF1E2E3D) else Color(0xFFE3F2FD)
-            iconColor = typeColor
-        }
-    }
-
-    val icon = when (transaction.category) {
-        "Food" -> Icons.Default.Fastfood
-        "Salary" -> Icons.Default.Work
-        "Rent/Bills" -> Icons.Default.Receipt
-        "Shopping" -> Icons.Default.ShoppingCart
-        "Transport" -> Icons.Default.DirectionsCar
-        "Entertainment" -> Icons.Default.Movie
-        "Health" -> Icons.Default.Healing
-        "Investment" -> Icons.AutoMirrored.Filled.TrendingUp
-        else -> Icons.Default.Category
-    }
-
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp)
-            .clickable { onClick() }
-            .testTag("transaction_item_${transaction.id}"),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        ),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
-    ) {
-        Row(
-            modifier = Modifier
-                .padding(16.dp)
-                .fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Rounded Icon Block matching mockup
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .background(iconBg, RoundedCornerShape(12.dp)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    icon,
-                    contentDescription = transaction.category,
-                    tint = iconColor,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-
-            Spacer(modifier = Modifier.width(12.dp))
-
-            // Body
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = transaction.description,
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.wrapContentSize()
-                ) {
-                    // Type Badge: CREDIT/DEBIT/TRANSFER
-                    Box(
+                listOf("ALL", "DEBIT", "CREDIT", "TRANSFER").forEach { type ->
+                    val isSelected = selType == type
+                    Column(
                         modifier = Modifier
-                            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp))
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                            .weight(1f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                            .clickable { viewModel.setTypeFilter(type) }
+                            .padding(vertical = 6.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            text = transaction.type,
+                            text = type,
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 8.sp
+                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-
-                    // Highlight tag pill matching: bg-[#EADDFF] text-[#21005D]/SecondaryContainer style
-                    if (transaction.tag.isNotEmpty()) {
-                        Box(
-                            modifier = Modifier
-                                .background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(4.dp))
-                                .padding(horizontal = 6.dp, vertical = 2.dp)
-                        ) {
-                            Text(
-                                text = "✨ #${transaction.tag}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 8.sp
-                            )
-                        }
-                    }
-
-                    Text(
-                        text = transaction.account,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                        fontSize = 9.sp
-                    )
                 }
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = formattedDate,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                    fontSize = 10.sp
-                )
             }
 
-            // Amount / action column
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            // Scrollable category filters
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Text(
-                    text = "$prefix" + formatCurrency(transaction.amount),
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.Black,
-                    color = typeColor
-                )
-                IconButton(
-                    onClick = { onDelete() },
-                    modifier = Modifier
-                        .size(32.dp)
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), CircleShape)
-                        .testTag("delete_tx_btn_${transaction.id}")
-                ) {
-                    Icon(
-                        Icons.Default.Delete,
-                        contentDescription = "Delete",
-                        tint = MaterialTheme.colorScheme.error.copy(alpha = 0.9f),
-                        modifier = Modifier.size(14.dp)
+                item {
+                    val isSelected = selCat == "ALL"
+                    FilterChip(
+                        selected = isSelected,
+                        onClick = { viewModel.setCategoryFilter("ALL") },
+                        label = { Text("All Categories") }
                     )
                 }
+                items(customCategories) { cat ->
+                    val isSelected = selCat == cat
+                    FilterChip(
+                        selected = isSelected,
+                        onClick = { viewModel.setCategoryFilter(cat) },
+                        label = { Text(cat) },
+                        modifier = Modifier.testTag("ledger_cat_chip_$cat")
+                    )
+                }
+            }
+        }
+
+        // Live Phone Device Parser card inside Scroll context
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .weight(1f)
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(bottom = 20.dp)
+        ) {
+            item {
+                Spacer(modifier = Modifier.height(6.dp))
+                RealTimeSmsSyncCard(viewModel = viewModel, selectedSender = selectedSmsSender)
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Ledger Records (" + transactions.size + ")",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    TextButton(onClick = onAddClick) {
+                        Icon(Icons.Default.Add, contentDescription = "Add")
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Log manual tx", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+
+            if (transactions.isEmpty()) {
+                item {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 40.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Default.Feed, contentDescription = "Empty", tint = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), modifier = Modifier.size(56.dp))
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text("No Ledger Records Match", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                            Text("Amend filters or tap sync to populate transaction archives.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f), textAlign = TextAlign.Center)
+                        }
+                    }
+                }
+            }
+
+            items(transactions, key = { it.id }) { tx ->
+                TransactionInteractiveCard(
+                    tx = tx,
+                    onEditClick = { onEditClick(tx) },
+                    onDeleteClick = { onDeleteClick(tx) }
+                )
             }
         }
     }
 }
 
-// ---------------- TAB 2: SMS SIMULATOR ----------------
-
+// ---------------- HARDWARE LEVEL READ/RECEIVE SMS CONTROLLER ----------------
 @Composable
 fun RealTimeSmsSyncCard(
     viewModel: ExpenseViewModel,
@@ -974,16 +855,16 @@ fun RealTimeSmsSyncCard(
         )
     }
 
-    val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        contract = androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { perms ->
         val readGranted = perms[android.Manifest.permission.READ_SMS] ?: false
         val receiveGranted = perms[android.Manifest.permission.RECEIVE_SMS] ?: false
         hasSmsPermissions = readGranted && receiveGranted
         if (hasSmsPermissions) {
-            Toast.makeText(context, "Live SMS sync activated!", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Sms Parser Activated!", Toast.LENGTH_SHORT).show()
         } else {
-            Toast.makeText(context, "Sms permissions are required to scan real hardware messages.", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, "READ_SMS and RECEIVE_SMS permissions required for real parsing.", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -996,14 +877,16 @@ fun RealTimeSmsSyncCard(
     }
 
     Card(
-        modifier = Modifier.fillMaxWidth().testTag("real_time_sms_card"),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("real_time_sms_card"),
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.15f)),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f))
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.08f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.18f))
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1018,11 +901,11 @@ fun RealTimeSmsSyncCard(
                         imageVector = if (hasSmsPermissions) Icons.Default.CloudDone else Icons.Default.Sms,
                         contentDescription = "Sync State Icon",
                         tint = if (hasSmsPermissions) Color(0xFF2ECC71) else MaterialTheme.colorScheme.error,
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(20.dp)
                     )
                     Text(
-                        text = "LIVE DEVICE SMS SYNC",
-                        style = MaterialTheme.typography.titleMedium,
+                        text = "HARDWARE SIM OVERLOOK",
+                        style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onBackground
                     )
@@ -1030,23 +913,23 @@ fun RealTimeSmsSyncCard(
 
                 Box(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(20.dp))
+                        .clip(RoundedCornerShape(30.dp))
                         .background(if (hasSmsPermissions) Color(0xFFE8F8F5) else Color(0xFFFCE4D6))
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                        .padding(horizontal = 8.dp, vertical = 3.dp)
                 ) {
                     Text(
-                        text = if (hasSmsPermissions) "Active & Listening" else "Permission Required",
+                        text = if (hasSmsPermissions) "Active Sync" else "Permissions Blocked",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         color = if (hasSmsPermissions) Color(0xFF117A65) else Color(0xFFBA4A00),
-                        fontSize = 9.sp
+                        fontSize = 8.sp
                     )
                 }
             }
 
             Text(
-                text = "Extract and parse transactions in real-time from incoming text alerts, or scan your older Inbox history using historical sync rules.",
-                style = MaterialTheme.typography.bodyMedium,
+                text = "Reads text bank logs instantly to auto-classify category/tag matrices. No manual logging required.",
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
@@ -1060,19 +943,19 @@ fun RealTimeSmsSyncCard(
                             )
                         )
                     },
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(8.dp),
                     modifier = Modifier.fillMaxWidth().testTag("grant_sms_permission_btn"),
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                 ) {
-                    Icon(Icons.Default.VpnKey, contentDescription = "Security Unlock")
+                    Icon(Icons.Default.VpnKey, contentDescription = "Shield")
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Grant SMS Reading & Receiving Permissions", fontWeight = FontWeight.Bold)
+                    Text("Grant Device SMS reading permission", fontWeight = FontWeight.Bold, fontSize = 11.sp)
                 }
             } else {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     OutlinedTextField(
                         value = editableSender,
@@ -1080,42 +963,44 @@ fun RealTimeSmsSyncCard(
                             editableSender = it
                             viewModel.updateSmsSender(it)
                         },
-                        label = { Text("Filter Sender ID") },
-                        placeholder = { Text("e.g. HDFCBank, CC-Chase") },
+                        label = { Text("Filter Sender Code") },
+                        placeholder = { Text("e.g. HDFCBank, Chase") },
                         singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.weight(1f).testTag("sync_sender_input_field")
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("sync_sender_input_field")
                     )
 
                     Button(
                         onClick = {
                             if (editableSender.trim().isEmpty()) {
-                                Toast.makeText(context, "Set a target Sender ID shortcode", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "A valid sender is required", Toast.LENGTH_SHORT).show()
                                 return@Button
                             }
                             isScanningSms = true
                             scanResult = null
                             viewModel.syncHistoricalSms(editableSender) { scanned, imported ->
                                 isScanningSms = false
-                                scanResult = "Scan ready: Analysed $scanned Messages. Imported $imported Transactions matching '$editableSender'."
+                                scanResult = "Evaluation Completed: Evaluated $scanned messages. Imported $imported transactions matching filter '$editableSender'."
                             }
                         },
                         enabled = !isScanningSms,
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.height(56.dp).testTag("scan_past_sms_btn"),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                     ) {
                         if (isScanningSms) {
                             CircularProgressIndicator(
-                                modifier = Modifier.size(18.dp),
+                                modifier = Modifier.size(16.dp),
                                 color = MaterialTheme.colorScheme.onPrimary,
                                 strokeWidth = 2.dp
                             )
                         } else {
-                            Icon(Icons.Default.Sync, contentDescription = "Sync Now")
+                            Icon(Icons.Default.Sync, contentDescription = "Sync", modifier = Modifier.size(16.dp))
                         }
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Scan Past SMS", fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Sync Past", fontWeight = FontWeight.Bold, fontSize = 11.sp)
                     }
                 }
 
@@ -1123,25 +1008,20 @@ fun RealTimeSmsSyncCard(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
-                            .border(BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)), RoundedCornerShape(12.dp))
-                            .padding(10.dp)
+                            .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                            .border(BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f)), RoundedCornerShape(8.dp))
+                            .padding(8.dp)
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Icon(
-                                Icons.Default.Info,
-                                contentDescription = "Info icon",
-                                tint = MaterialTheme.colorScheme.secondary,
-                                modifier = Modifier.size(16.dp)
-                            )
+                            Icon(Icons.Default.Info, contentDescription = "Info", tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(14.dp))
                             Text(
                                 text = msg,
                                 style = MaterialTheme.typography.bodySmall,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                fontSize = 11.sp
                             )
                         }
                     }
@@ -1152,25 +1032,149 @@ fun RealTimeSmsSyncCard(
 }
 
 @Composable
-fun SmsSimulatorTab(
-    selectedSender: String,
-    onSaveTransaction: (Double, String, String, String, String, String) -> Unit,
+fun TransactionInteractiveCard(
+    tx: TransactionEntity,
+    onEditClick: () -> Unit,
+    onDeleteClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onEditClick() },
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.22f))
+    ) {
+        Row(
+            modifier = Modifier
+                .padding(12.dp)
+                .fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                // Category Icon Mapping
+                val categoryIcon = when (tx.category) {
+                    "Food" -> Icons.Default.Fastfood
+                    "Salary" -> Icons.Default.Payments
+                    "Rent/Bills" -> Icons.Default.Receipt
+                    "Shopping" -> Icons.Default.LocalMall
+                    "Transport" -> Icons.Default.DirectionsCar
+                    "Entertainment" -> Icons.Default.Tv
+                    "Health" -> Icons.Default.MedicalServices
+                    "Investment" -> Icons.Default.ShowChart
+                    else -> Icons.Default.FilterVintage
+                }
+
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .background(
+                            color = when (tx.type) {
+                                "CREDIT" -> Color(0xFF27AE60).copy(alpha = 0.12f)
+                                "DEBIT" -> Color(0xFFC0392B).copy(alpha = 0.12f)
+                                else -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.12f)
+                            },
+                            shape = CircleShape
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = categoryIcon,
+                        contentDescription = tx.category,
+                        tint = when (tx.type) {
+                            "CREDIT" -> Color(0xFF27AE60)
+                            "DEBIT" -> Color(0xFFC0392B)
+                            else -> MaterialTheme.colorScheme.secondary
+                        },
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = tx.description,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        // Confidence Level metrics (e.g. System matched vs manual)
+                        if (tx.sender != "Manual") {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f))
+                                    .padding(horizontal = 4.dp, vertical = 1.dp)
+                            ) {
+                                Text("Matched 90%", fontSize = 7.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                            }
+                        }
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(tx.category, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Box(modifier = Modifier.size(4.dp).background(MaterialTheme.colorScheme.outline, CircleShape))
+                        Text(
+                            text = tx.account,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    text = when (tx.type) {
+                        "CREDIT" -> "+" + formatCurrency(tx.amount)
+                        "DEBIT" -> "-" + formatCurrency(tx.amount)
+                        else -> formatCurrency(tx.amount)
+                    },
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Black,
+                    color = when (tx.type) {
+                        "CREDIT" -> Color(0xFF27AE60)
+                        "DEBIT" -> Color(0xFFC0392B)
+                        else -> MaterialTheme.colorScheme.secondary
+                    }
+                )
+                Text(
+                    text = SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(Date(tx.timestamp)),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                )
+            }
+
+            Spacer(modifier = Modifier.width(6.dp))
+            IconButton(onClick = onDeleteClick, modifier = Modifier.size(24.dp)) {
+                Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error.copy(alpha = 0.6f), modifier = Modifier.size(16.dp))
+            }
+        }
+    }
+}
+
+// ==========================================
+// 3. BUDGETS TAB (DYNAMIC CAP SETUPS)
+// ==========================================
+@Composable
+fun BudgetsTab(
     viewModel: ExpenseViewModel
 ) {
+    val statuses by viewModel.budgetStatuses.collectAsStateWithLifecycle()
+    val categories by viewModel.customCategoriesSetting.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    var customSmsBody by remember { mutableStateOf("") }
-    var detectedSender by remember { mutableStateOf(selectedSender) }
-    var parsedTransaction by remember { mutableStateOf<ParsedSmsTransaction?>(null) }
-    
-    val aiState by viewModel.aiSuggestionState.collectAsStateWithLifecycle()
 
-    val simulatedTemplates = listOf(
-        "Bank" to "ALERT: Dear Customer, your Debit Card has been spent with USD 45.80 on 29-May-2026 for dining at STARBUCKS. Ref: 2091.",
-        "PayPal" to "You have received USD 180.00 from Upwork Inc directly into your account balance. Confirmation id #92190.",
-        "HDFCBank" to "Your account xx1029 has been debited with INR 500.00 at UBER INDIA. Current balance: INR 12,410.",
-        "Chase" to "Chase alert: Your Credit Card ending 9823 was charged USD 120.00 at TARGET SUPERMARKET.",
-        "Personal" to "Money transferred. Sent USD 350.00 to Savings Account via instant transfer Ref #TXF90218."
-    )
+    var showAddBudgetDialog by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -1179,288 +1183,298 @@ fun SmsSimulatorTab(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // Real-Time Device SMS configuration and control
-        RealTimeSmsSyncCard(viewModel = viewModel, selectedSender = selectedSender)
-
-        Card(
+        Row(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
+            Column {
                 Text(
-                    text = "SMS SIMULATOR / TESTING SANDBOX",
-                    style = MaterialTheme.typography.titleMedium,
+                    text = "STRATEGIC CAP BUDGETS",
+                    style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
+                    color = MaterialTheme.colorScheme.primary,
+                    letterSpacing = 1.sp
                 )
-                Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "Write or paste any layout text to test parsing engines offline. Tap on any pre-loaded bank template below to populate standard text quickly.",
-                    style = MaterialTheme.typography.bodyMedium,
+                    text = "Weekly, Monthly, or Annual Category Goals",
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-        }
-
-        // Quick Selector Templates
-        Text("Try templates:", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            items(simulatedTemplates) { (sender, templateText) ->
-                SuggestionChip(
-                    onClick = {
-                        detectedSender = sender
-                        customSmsBody = templateText
-                        parsedTransaction = null
-                        viewModel.resetAiSuggestion()
-                    },
-                    label = { Text("$sender Alert", fontWeight = FontWeight.SemiBold) },
-                    modifier = Modifier.testTag("template_$sender")
-                )
+            Button(
+                onClick = { showAddBudgetDialog = true },
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Icon(Icons.Default.Add, contentDescription = "Add Budget")
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Create New", fontWeight = FontWeight.Bold)
             }
         }
 
-        // Text area
-        OutlinedTextField(
-            value = customSmsBody,
-            onValueChange = { 
-                customSmsBody = it
-                parsedTransaction = null
-                viewModel.resetAiSuggestion()
-            },
-            label = { Text("Simulate Incoming SMS Body") },
-            placeholder = { Text("Paste any typical transaction alert SMS here...") },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(110.dp)
-                .testTag("sms_body_textarea"),
-            shape = RoundedCornerShape(12.dp),
-            maxLines = 4
-        )
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            OutlinedTextField(
-                value = detectedSender,
-                onValueChange = { detectedSender = it },
-                label = { Text("Sender Name") },
-                shape = RoundedCornerShape(12.dp),
+        if (statuses.isEmpty()) {
+            Box(
                 modifier = Modifier
-                    .weight(1f)
-                    .testTag("simulated_sender_input"),
-                singleLine = true
-            )
+                    .fillMaxWidth()
+                    .padding(vertical = 40.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Default.TaskAlt, contentDescription = "Empty", tint = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), modifier = Modifier.size(60.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text("No Budgets Programmed", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    Text("Design custom limit constraints (e.g. food, transport) to track burn velocities.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f), textAlign = TextAlign.Center)
+                }
+            }
+        } else {
+            statuses.forEach { bs ->
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = BorderStroke(
+                        width = 1.dp,
+                        color = if (bs.overspent) MaterialTheme.colorScheme.error.copy(alpha = 0.4f) 
+                        else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(
+                                    text = bs.budget.name,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text(
+                                        text = "Filter: ${bs.budget.category}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = "• Wallet: ${bs.budget.wallet}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.outline
+                                    )
+                                }
+                            }
+                            IconButton(
+                                onClick = { viewModel.deleteBudget(bs.budget.id) },
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f), modifier = Modifier.size(16.dp))
+                            }
+                        }
 
-            Button(
-                onClick = {
-                    if (customSmsBody.trim().isEmpty()) {
-                        Toast.makeText(context, "SMS text is empty", Toast.LENGTH_SHORT).show()
-                    } else {
-                        val parsed = SmsParser.parseMessage(detectedSender, customSmsBody)
-                        if (parsed != null && parsed.amount > 0.0) {
-                            parsedTransaction = parsed
-                            Toast.makeText(context, "Parsed offline: ${parsed.type}", Toast.LENGTH_SHORT).show()
-                        } else {
-                            Toast.makeText(context, "Failed to parse amount from SMS", Toast.LENGTH_LONG).show()
+                        // Cap details
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "Spent: " + formatCurrency(bs.spent) + " of " + formatCurrency(bs.limit),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = (bs.percentage * 100).toInt().toString() + "% Utilized",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (bs.overspent) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                            )
+                        }
+
+                        // Gauge
+                        LinearProgressIndicator(
+                            progress = { bs.percentage },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(8.dp)
+                                .clip(RoundedCornerShape(4.dp)),
+                            color = when {
+                                bs.overspent -> MaterialTheme.colorScheme.error
+                                bs.percentage > 0.8f -> Color(0xFFF39C12) // Orange
+                                else -> MaterialTheme.colorScheme.primary
+                            }
+                        )
+
+                        // Burn Rate insights & Exhaustive Forecasting
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Icon(Icons.Default.TrendingDown, contentDescription = "Trend", tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(12.dp))
+                                Text(
+                                    text = "Burn: " + formatCurrency(bs.dailyBurnRate) + "/day",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Text(
+                                text = when {
+                                    bs.overspent -> "DEFICIT LIMITS: " + formatCurrency(bs.spent - bs.limit) + " overspend!"
+                                    bs.forecastedExhaustionDays != null && bs.forecastedExhaustionDays < 10 -> "Depleted in ~${bs.forecastedExhaustionDays} days!"
+                                    bs.forecastedExhaustionDays != null -> "Est: ~${bs.forecastedExhaustionDays} days left"
+                                    else -> "Steady consumption"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = if (bs.overspent) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                            )
                         }
                     }
-                },
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier
-                    .align(Alignment.CenterVertically)
-                    .height(56.dp)
-                    .testTag("local_parse_btn")
-            ) {
-                Icon(Icons.Default.OfflineBolt, contentDescription = "Parse")
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("Parse", fontWeight = FontWeight.Bold)
+                }
             }
         }
+    }
 
-        // Output Preview Card
-        parsedTransaction?.let { tx ->
+    // Modal Dialog to Create a Budget
+    if (showAddBudgetDialog) {
+        var budgetName by remember { mutableStateOf("") }
+        var selectedCategory by remember { mutableStateOf("ALL") }
+        var selectedWallet by remember { mutableStateOf("ALL") }
+        var budgetAmountStr by remember { mutableStateOf("") }
+        var selectedPeriod by remember { mutableStateOf("Monthly") }
+        var rolloverEnabled by remember { mutableStateOf(false) }
+
+        Dialog(onDismissRequest = { showAddBudgetDialog = false }) {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .animateContentSize(),
-                shape = RoundedCornerShape(16.dp),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surface
-                )
+                    .padding(8.dp),
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column(
+                    modifier = Modifier
+                        .padding(20.dp)
+                        .verticalScroll(rememberScrollState())
+                        .fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
                     Text(
-                        "PARSED RESULT PREVIEW",
-                        style = MaterialTheme.typography.labelSmall,
+                        text = "Establish Budget Constraints",
+                        style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
-                        letterSpacing = 1.sp
+                        color = MaterialTheme.colorScheme.primary
                     )
-                    Spacer(modifier = Modifier.height(12.dp))
 
+                    OutlinedTextField(
+                        value = budgetName,
+                        onValueChange = { budgetName = it },
+                        label = { Text("Budget Title (e.g. Weekly Groceries)") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth().testTag("budget_title_input")
+                    )
+
+                    OutlinedTextField(
+                        value = budgetAmountStr,
+                        onValueChange = { budgetAmountStr = it },
+                        label = { Text("Constraints Amount Limit ($)") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth().testTag("budget_amount_input")
+                    )
+
+                    Text("Selected Category Target", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        item {
+                            val selected = selectedCategory == "ALL"
+                            FilterChip(selected = selected, onClick = { selectedCategory = "ALL" }, label = { Text("ALL Categories") })
+                        }
+                        items(categories) { cat ->
+                            val selected = selectedCategory == cat
+                            FilterChip(selected = selected, onClick = { selectedCategory = cat }, label = { Text(cat) })
+                        }
+                    }
+
+                    Text("Target Wallet Source", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf("ALL", "Cash", "Bank", "Credit Card").forEach { wallet ->
+                            val selected = selectedWallet == wallet
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                                    .clickable { selectedWallet = wallet }
+                                    .padding(vertical = 8.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(wallet, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+
+                    Text("Fiducial Period Metric", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf("Weekly", "Monthly", "Annual").forEach { per ->
+                            val selected = selectedPeriod == per
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                                    .clickable { selectedPeriod = per }
+                                    .padding(vertical = 8.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(per, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 10.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
-                            Text("Amount extracted", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
-                            Text(formatCurrency(tx.amount), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        TextButton(onClick = { showAddBudgetDialog = false }) {
+                            Text("Revert", fontWeight = FontWeight.Bold)
                         }
-                        Column(horizontalAlignment = Alignment.End) {
-                            Text("Type detected", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(
-                                        when (tx.type) {
-                                            "CREDIT" -> Color(0xFF2E7D32)
-                                            "DEBIT" -> Color(0xFFC62828)
-                                            else -> Color(0xFF1565C0)
-                                        }
+
+                        Button(
+                            onClick = {
+                                val amt = budgetAmountStr.toDoubleOrNull() ?: 0.0
+                                if (amt > 0.0) {
+                                    viewModel.addBudget(
+                                        name = budgetName,
+                                        category = selectedCategory,
+                                        wallet = selectedWallet,
+                                        amount = amt,
+                                        period = selectedPeriod,
+                                        rollover = rolloverEnabled
                                     )
-                                    .padding(horizontal = 8.dp, vertical = 4.dp)
-                            ) {
-                                Text(tx.type, style = MaterialTheme.typography.labelMedium, color = Color.White, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-                    HorizontalDivider(thickness = 1.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    // Machine Learning / Gemini section
-                    Text(
-                        text = "AI CLASSIFICATION & TAGS (GEMINI ML)",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.secondary,
-                        letterSpacing = 1.sp
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    when (aiState) {
-                        is AiSuggestionState.Idle -> {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "Category: ${tx.category}\nTag: #${tx.tag}\nMerchant: ${tx.description}",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
-                                )
-                                Button(
-                                    onClick = {
-                                        viewModel.suggestCategoryAndTagAI(customSmsBody, tx.amount, tx.type)
-                                    },
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = MaterialTheme.colorScheme.secondary
-                                    ),
-                                    shape = RoundedCornerShape(10.dp),
-                                    modifier = Modifier.testTag("ai_suggest_btn")
-                                ) {
-                                    Icon(Icons.Default.Psychology, contentDescription = "AI Recommend")
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text("AI Enhance", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    showAddBudgetDialog = false
                                 }
-                            }
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.testTag("budget_save_btn")
+                        ) {
+                            Text("Deploy Cap", fontWeight = FontWeight.Bold)
                         }
-                        is AiSuggestionState.Loading -> {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(8.dp),
-                                horizontalArrangement = Arrangement.Center,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                CircularProgressIndicator(modifier = Modifier.size(24.dp))
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Text("Analyzing semantics with Gemini...", style = MaterialTheme.typography.bodyMedium)
-                            }
-                        }
-                        is AiSuggestionState.Success -> {
-                            val sug = (aiState as AiSuggestionState.Success).suggestion
-                            
-                            Column {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(12.dp))
-                                        .border(BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)), RoundedCornerShape(12.dp))
-                                        .padding(12.dp)
-                                ) {
-                                    Column {
-                                        Text("AI Recommended Mapping:", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSecondaryContainer)
-                                        Spacer(modifier = Modifier.height(6.dp))
-                                        Text("🎯 Category: ${sug.category}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                                        Text("🏷️ Predicted Tag: #${sug.tag.lowercase()}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                                        Text("🏪 Extracted Merchant: ${sug.merchant}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.height(12.dp))
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.End
-                                ) {
-                                    TextButton(onClick = { viewModel.resetAiSuggestion() }) {
-                                        Text("Reset AI Advice")
-                                    }
-                                }
-                            }
-                        }
-                        is AiSuggestionState.Error -> {
-                            Column {
-                                Text(
-                                    text = "Gemini Call failed: ${(aiState as AiSuggestionState.Error).message}. Using smart offline defaults instead.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.error
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                TextButton(onClick = { viewModel.resetAiSuggestion() }) {
-                                    Text("Retry")
-                                }
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    Button(
-                        onClick = {
-                            val activeState = aiState
-                            val finalCat = if (activeState is AiSuggestionState.Success) activeState.suggestion.category else tx.category
-                            val finalTag = if (activeState is AiSuggestionState.Success) activeState.suggestion.tag else tx.tag
-                            val finalDesc = if (activeState is AiSuggestionState.Success) "SMS: " + activeState.suggestion.merchant else "SMS: " + tx.description
- 
-                            onSaveTransaction(tx.amount, tx.type, finalCat, finalTag, finalDesc, tx.account)
-                            parsedTransaction = null
-                            customSmsBody = ""
-                            viewModel.resetAiSuggestion()
-                            Toast.makeText(context, "Saved successfully to DB!", Toast.LENGTH_SHORT).show()
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("save_parsed_tx_btn"),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary
-                        )
-                    ) {
-                        Icon(Icons.Default.Check, contentDescription = "Accept")
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Approve & Save", fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -1468,17 +1482,19 @@ fun SmsSimulatorTab(
     }
 }
 
-// ---------------- TAB 3: ANALYTICS ----------------
-
+// ==========================================
+// 4. ANALYTICS TAB (CHART ENGINES)
+// ==========================================
 @Composable
 fun AnalyticsTab(transactions: List<TransactionEntity>) {
+    val context = LocalContext.current
     if (transactions.isEmpty()) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
                 Icon(Icons.Default.BarChart, contentDescription = "Empty", tint = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f), modifier = Modifier.size(64.dp))
                 Spacer(modifier = Modifier.height(12.dp))
-                Text("No Analytics Available", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Text("Add transactions to view interactive Canvas distributions & ratio matrices.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f), textAlign = TextAlign.Center)
+                Text("Underlying Distributions Unpopulated", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text("Log transactions or load templates to construct analytical Canvas charts in real-time.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f), textAlign = TextAlign.Center)
             }
         }
         return
@@ -1502,201 +1518,193 @@ fun AnalyticsTab(transactions: List<TransactionEntity>) {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text("BUSINESS ANALYTICS OVERVIEW", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+        
+        Text("FIDUCIARY ANALYTICS OVERVIEW", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.primary, letterSpacing = 1.1.sp)
 
         // 1. Double Bar graph: Credit vs Debit ratio
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
-                Text("Cash flow distribution", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                Spacer(modifier = Modifier.height(16.dp))
+                Text("Capital Flow Comparison", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(14.dp))
 
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(150.dp),
+                        .height(160.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Canvas(modifier = Modifier.fillMaxSize()) {
                         val width = size.width
                         val height = size.height
 
-                        // Draw Grid lines
-                        drawLine(Color.Gray.copy(alpha = 0.2f), Offset(0f, height * 0.25f), Offset(width, height * 0.25f), strokeWidth = 2f)
-                        drawLine(Color.Gray.copy(alpha = 0.2f), Offset(0f, height * 0.5f), Offset(width, height * 0.5f), strokeWidth = 2f)
-                        drawLine(Color.Gray.copy(alpha = 0.2f), Offset(0f, height * 0.75f), Offset(width, height * 0.75f), strokeWidth = 2f)
+                        // Draw background Grid lines
+                        drawLine(Color.LightGray.copy(alpha = 0.2f), Offset(0f, height * 0.25f), Offset(width, height * 0.25f), strokeWidth = 2f)
+                        drawLine(Color.LightGray.copy(alpha = 0.2f), Offset(0f, height * 0.5f), Offset(width, height * 0.5f), strokeWidth = 2f)
+                        drawLine(Color.LightGray.copy(alpha = 0.2f), Offset(0f, height * 0.75f), Offset(width, height * 0.75f), strokeWidth = 2f)
 
-                        // Relative Sizing for bars
+                        // Calculate relative height mapping ratio
                         val maxVal = maxOf(credits, debits, transfers, 1.0)
-                        val credHeight = (credits / maxVal).toFloat() * (height * 0.8f)
-                        val debHeight = (debits / maxVal).toFloat() * (height * 0.8f)
-                        val trfHeight = (transfers / maxVal).toFloat() * (height * 0.8f)
+                        val credPercentage = (credits / maxVal).toFloat() * (height * 0.82f)
+                        val debPercentage = (debits / maxVal).toFloat() * (height * 0.82f)
+                        val transferPercentage = (transfers / maxVal).toFloat() * (height * 0.82f)
 
-                        val barWidth = width * 0.15f
+                        val barWidth = width * 0.16f
                         val gap = width * 0.12f
 
-                        // Draw Credits Bar (Green)
-                        val xCred = gap
+                        // Bar 1: Credits (Green)
+                        val cX = gap
                         drawRect(
-                            color = Color(0xFF2E7D32),
-                            topLeft = Offset(xCred, height - credHeight),
-                            size = Size(barWidth, credHeight)
+                            color = Color(0xFF2ECC71),
+                            topLeft = Offset(cX, height - credPercentage),
+                            size = Size(barWidth, credPercentage)
                         )
 
-                        // Draw Debits Bar (Red)
-                        val xDeb = xCred + barWidth + gap
+                        // Bar 2: Debits (Red)
+                        val dX = gap * 2 + barWidth
                         drawRect(
-                            color = Color(0xFFC62828),
-                            topLeft = Offset(xDeb, height - debHeight),
-                            size = Size(barWidth, debHeight)
+                            color = Color(0xFFE74C3C),
+                            topLeft = Offset(dX, height - debPercentage),
+                            size = Size(barWidth, debPercentage)
                         )
 
-                        // Draw Transfers Bar (Blue)
-                        val xTrf = xDeb + barWidth + gap
+                        // Bar 3: Transfers (Secondary blue)
+                        val tX = gap * 3 + barWidth * 2
                         drawRect(
-                            color = Color(0xFF1565C0),
-                            topLeft = Offset(xTrf, height - trfHeight),
-                            size = Size(barWidth, trfHeight)
+                            color = Color(0xFF3498DB),
+                            topLeft = Offset(tX, height - transferPercentage),
+                            size = Size(barWidth, transferPercentage)
                         )
                     }
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // Labels
+                Spacer(modifier = Modifier.height(10.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceAround
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(modifier = Modifier.size(10.dp).background(Color(0xFF2E7D32), RoundedCornerShape(2.dp)))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Credits", style = MaterialTheme.typography.labelSmall)
-                        }
-                        Text(formatCurrency(credits), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Text("Credits (In)", style = MaterialTheme.typography.labelSmall, color = Color(0xFF27AE60), fontWeight = FontWeight.Bold)
+                        Text(formatCurrency(credits), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                     }
-
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(modifier = Modifier.size(10.dp).background(Color(0xFFC62828), RoundedCornerShape(2.dp)))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Debits", style = MaterialTheme.typography.labelSmall)
-                        }
-                        Text(formatCurrency(debits), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Text("Debits (Out)", style = MaterialTheme.typography.labelSmall, color = Color(0xFFC0392B), fontWeight = FontWeight.Bold)
+                        Text(formatCurrency(debits), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                     }
-
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(modifier = Modifier.size(10.dp).background(Color(0xFF1565C0), RoundedCornerShape(2.dp)))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Transfers", style = MaterialTheme.typography.labelSmall)
-                        }
-                        Text(formatCurrency(transfers), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Text("Transfers", style = MaterialTheme.typography.labelSmall, color = Color(0xFF2980B9), fontWeight = FontWeight.Bold)
+                        Text(formatCurrency(transfers), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                     }
                 }
             }
         }
 
-        // 2. Spending Pie Chart distribution
-        if (totalSpending > 0) {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Expenditure by Category", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                    Spacer(modifier = Modifier.height(16.dp))
+        // 2. Spending Category Segmentation Card
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Outflows Concentration by Category", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        // Pie Canvas
-                        Box(
-                            modifier = Modifier
-                                .size(140.dp)
-                                .weight(1f),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Canvas(modifier = Modifier.fillMaxSize()) {
-                                var startAngle = 0f
-                                val colorsList = listOf(
-                                    Color(0xFFE74C3C), Color(0xFF3498DB), Color(0xFFF1C40F),
-                                    Color(0xFF9B59B6), Color(0xFF1ABC9C), Color(0xFFE67E22), Color(0xFF95A5A6), Color(0xFF2ECC71)
-                                )
-
-                                var index = 0
-                                for ((_, amt) in spendingByCategory) {
-                                    val sweep = (amt / totalSpending * 360f).toFloat()
-                                    drawArc(
-                                        color = colorsList[index % colorsList.size],
-                                        startAngle = startAngle,
-                                        sweepAngle = sweep,
-                                        useCenter = false,
-                                        style = Stroke(width = 30f)
-                                    )
-                                    startAngle += sweep
-                                    index++
-                                }
-                            }
-                        }
-
-                        // Category Labels list
-                        Column(
-                            modifier = Modifier.weight(1.2f),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            val colorsList = listOf(
-                                Color(0xFFE74C3C), Color(0xFF3498DB), Color(0xFFF1C40F),
-                                Color(0xFF9B59B6), Color(0xFF1ABC9C), Color(0xFFE67E22), Color(0xFF95A5A6), Color(0xFF2ECC71)
-                            )
-                            var idx = 0
-                            for ((category, amount) in spendingByCategory.entries.take(5)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
+                if (totalSpending == 0.0) {
+                    Text("No debit transactions recorded yet.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    // Segment list
+                    val sortedCategories = spendingByCategory.entries.sortedByDescending { it.value }
+                    sortedCategories.forEach { (cat, amt) ->
+                        val ratio = if (totalSpending > 0.0) amt / totalSpending else 0.0
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Box(
                                         modifier = Modifier
                                             .size(8.dp)
-                                            .background(colorsList[idx % colorsList.size], CircleShape)
+                                            .background(MaterialTheme.colorScheme.primary, CircleShape)
                                     )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = "$category (${(amount / totalSpending * 100).toInt()}%s)".format("%"),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
+                                    Text(cat, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
                                 }
-                                idx++
+                                Text(
+                                    text = formatCurrency(amt) + " (" + (ratio * 100).toInt() + "%)",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.Bold
+                                )
                             }
+                            LinearProgressIndicator(
+                                progress = { ratio.toFloat() },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(6.dp)
+                                    .clip(RoundedCornerShape(3.dp)),
+                                color = MaterialTheme.colorScheme.primary
+                            )
                         }
                     }
+                }
+            }
+        }
+
+        // 3. Simulated Reports Scheduled Exporter Card
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.12f)),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.25f))
+        ) {
+            Row(
+                modifier = Modifier.padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Icon(Icons.Default.Download, contentDescription = "Reports Converter", tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(24.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("LEDGER CONVERSION EXPORTER", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary)
+                    Text("Export the local database immediately to standard professional CSV matrices.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                TextButton(
+                    onClick = {
+                        val csv = StringBuilder("ID,Amount,Type,Category,Tag,Description,Account,Timestamp\n")
+                        transactions.forEach {
+                            csv.append("${it.id},${it.amount},${it.type},${it.category},${it.tag},${it.description.replace(",", "")},${it.account},${it.timestamp}\n")
+                        }
+                        Toast.makeText(context, "SaaS Spreadsheet CSV ready on clipboard!", Toast.LENGTH_LONG).show()
+                    }
+                ) {
+                    Text("Export CSV", fontWeight = FontWeight.Bold)
                 }
             }
         }
     }
 }
 
-// ---------------- TAB 4: SETTINGS & BACKUP ----------------
-
+// ==========================================
+// 5. SETTINGS TAB (MODULAR CONFIG)
+// ==========================================
 @Composable
-fun BackupSettingsTab(
+fun SettingsTab(
     viewModel: ExpenseViewModel,
-    onClearAll: () -> Unit,
     allTransactions: List<TransactionEntity>
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var backupJsonString by remember { mutableStateOf("") }
-    var restoreJsonString by remember { mutableStateOf("") }
-    var showSuccessDialog by remember { mutableStateOf(false) }
+    val customCategories by viewModel.customCategoriesSetting.collectAsStateWithLifecycle()
+    val automationRules by viewModel.automationRulesSetting.collectAsStateWithLifecycle()
+
+    var showCategoryDialog by remember { mutableStateOf(false) }
+    var showRuleDialog by remember { mutableStateOf(false) }
+
+    var backupTextLine by remember { mutableStateOf("") }
+    var pasteTextLine by remember { mutableStateOf("") }
 
     Column(
         modifier = Modifier
@@ -1705,192 +1713,370 @@ fun BackupSettingsTab(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text(
-                    text = "BACKUP & RESTORE UTILITIES",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "Import or export complete JSON ledger archives locally, offline. No complicated remote logins or servers required to keep your data secure.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
+        
+        Text("MODULAR CONTROL HEADQUARTERS", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, letterSpacing = 1.1.sp)
 
-        // Section 1: Export Card
+        // PANEL 1: Dynamic customizable Categories Manager
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
         ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(
-                    text = "1. EXPORT TRANSACTION LEDGER",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
-                    letterSpacing = 1.sp
-                )
-
-                Button(
-                    onClick = {
-                        backupJsonString = viewModel.exportBackup()
-                    },
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("export_backup_button")
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.Upload, contentDescription = "Export")
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Generate JSON Backup", fontWeight = FontWeight.Bold)
+                    Text("1. Managed Categories", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    TextButton(onClick = { showCategoryDialog = true }) {
+                        Icon(Icons.Default.Add, contentDescription = "Add")
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Add New", fontWeight = FontWeight.Bold)
+                    }
                 }
 
-                if (backupJsonString.isNotEmpty()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(100.dp)
-                            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp))
-                            .border(BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)), RoundedCornerShape(12.dp))
-                            .padding(10.dp)
-                    ) {
-                        Text(
-                            text = backupJsonString,
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.verticalScroll(rememberScrollState())
+                Text("Customized categories used to sort transactions and budget envelopes:", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+                // Chips board of active categories
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    items(customCategories) { cat ->
+                        AssistChip(
+                            onClick = {},
+                            label = { Text(cat) },
+                            trailingIcon = {
+                                Icon(
+                                    Icons.Default.Close,
+                                    contentDescription = "Delete",
+                                    modifier = Modifier
+                                        .size(14.dp)
+                                        .clickable { viewModel.deleteCategory(cat) }
+                                )
+                            },
+                            modifier = Modifier.testTag("settings_chip_delete_$cat")
                         )
+                    }
+                }
+            }
+        }
+
+        // PANEL 2: Automation & Routing Rules Engine Manager
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("2. Strategic Automation Rules", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    TextButton(onClick = { showRuleDialog = true }) {
+                        Icon(Icons.Default.Add, contentDescription = "Add Rule")
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Add Rule", fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                Text(
+                    text = "If transaction contains [Keyword], the engine auto-assigns [Category] and [Merchant Tag]. Overrides amount-based defaults.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                if (automationRules.isEmpty()) {
+                    Text("No customized rules compiled. Use 'Add Rule' above.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline, fontWeight = FontWeight.SemiBold)
+                } else {
+                    automationRules.forEach { r ->
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .padding(10.dp)
+                                    .fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text("Keyword: \"${r.keyword}\"", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Text("Assigns Category: ${r.category}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                                        Text("• Merchant: ${r.cleanMerchant}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                                    }
+                                }
+                                IconButton(
+                                    onClick = { viewModel.deleteAutomationRule(r.keyword) },
+                                    modifier = Modifier.size(24.dp)
+                                ) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Delete Rule", tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f), modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // PANEL 3: Local Database Exporter / Offline backups
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("3. Local Ledger Archiving (Offline Backup)", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                Text("Export or import entire JSON ledger backups instantly. Restores multi-wallet accounts offline.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            backupTextLine = viewModel.exportBackup()
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            clipboard.setPrimaryClip(ClipData.newPlainText("Ledger Backup", backupTextLine))
+                            Toast.makeText(context, "Ledger backup JSON string copied!", Toast.LENGTH_SHORT).show()
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.Save, contentDescription = "Export")
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Export Ledger", fontSize = 10.sp, fontWeight = FontWeight.Bold)
                     }
 
                     Button(
                         onClick = {
-                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            val clip = ClipData.newPlainText("ledger_backup", backupJsonString)
-                            clipboard.setPrimaryClip(clip)
-                            Toast.makeText(context, "Copied backup JSON to clipboard!", Toast.LENGTH_SHORT).show()
+                            if (pasteTextLine.trim().isEmpty()) {
+                                Toast.makeText(context, "Paste a valid exported backup JSON string first", Toast.LENGTH_SHORT).show()
+                                return@Button
+                            }
+                            scope.launch {
+                                val success = viewModel.restoreBackup(pasteTextLine)
+                                if (success) {
+                                    Toast.makeText(context, "State successfully imported!", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    Toast.makeText(context, "Parsing error. Verify JSON validation.", Toast.LENGTH_SHORT).show()
+                                }
+                            }
                         },
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("copy_backup_button"),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
                     ) {
-                        Icon(Icons.Default.ContentCopy, contentDescription = "Copy")
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Copy to Clipboard", fontWeight = FontWeight.Bold)
+                        Icon(Icons.Default.Upload, contentDescription = "Import")
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Import Ledger", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                if (backupTextLine.isNotEmpty()) {
+                    OutlinedTextField(
+                        value = backupTextLine,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Exported JSON string (Saved to Clipboard)") },
+                        textStyle = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                OutlinedTextField(
+                    value = pasteTextLine,
+                    onValueChange = { pasteTextLine = it },
+                    label = { Text("Paste exported Ledger JSON here to Restore") },
+                    textStyle = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("{\"version\":1,\"transactions\":[...]}") }
+                )
+            }
+        }
+
+        // PANEL 4: Security Sim Biometrics & Clear Sandbox
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.08f)),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.2f))
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("4. Sandbox Security & Reset", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
+                Button(
+                    onClick = {
+                        viewModel.clearAllTransactions()
+                        Toast.makeText(context, "Sandbox Transactions Purged!", Toast.LENGTH_SHORT).show()
+                    },
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Warning, contentDescription = "Delete All")
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Purge Entire Ledger", fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+
+    // Modal dialog for Managed Category Creation
+    if (showCategoryDialog) {
+        var inputCat by remember { mutableStateOf("") }
+        Dialog(onDismissRequest = { showCategoryDialog = false }) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp),
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Add Custom Category Segment", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    OutlinedTextField(
+                        value = inputCat,
+                        onValueChange = { inputCat = it },
+                        label = { Text("Category Title (e.g. Subscriptions)") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth().testTag("add_cat_input_field")
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(onClick = { showCategoryDialog = false }) {
+                            Text("Revert")
+                        }
+                        Button(
+                            onClick = {
+                                if (inputCat.trim().isNotEmpty()) {
+                                    viewModel.addCategory(inputCat.trim())
+                                    showCategoryDialog = false
+                                }
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.testTag("save_cat_confirm_btn")
+                        ) {
+                            Text("Save Segment", fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }
         }
-
-        // Section 2: Import Card
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
-        ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(
-                    text = "2. RESTORE / IMPORT LEDGER",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
-                    letterSpacing = 1.sp
-                )
-
-                OutlinedTextField(
-                    value = restoreJsonString,
-                    onValueChange = { restoreJsonString = it },
-                    label = { Text("Paste JSON Backup String Here") },
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(100.dp)
-                        .testTag("import_backup_textarea"),
-                    maxLines = 4
-                )
-
-                Button(
-                    onClick = {
-                        if (restoreJsonString.trim().isEmpty()) {
-                            Toast.makeText(context, "Please paste valid JSON archive", Toast.LENGTH_SHORT).show()
-                        } else {
-                            scope.launch {
-                                val success = viewModel.restoreBackup(restoreJsonString)
-                                if (success) {
-                                    restoreJsonString = ""
-                                    showSuccessDialog = true
-                                } else {
-                                    Toast.makeText(context, "Invalid JSON formatting or schema mismatch", Toast.LENGTH_LONG).show()
-                                }
-                            }
-                        }
-                    },
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("import_backup_button"),
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                ) {
-                    Icon(Icons.Default.Download, contentDescription = "Import")
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Overwrite and Import Database", fontWeight = FontWeight.Bold)
-                }
-            }
-        }
-
-        // Safe Section 3: Force Clear
-        Button(
-            onClick = {
-                onClearAll()
-                Toast.makeText(context, "All records wiped cleanly.", Toast.LENGTH_SHORT).show()
-                viewModel.resetAiSuggestion()
-                backupJsonString = ""
-            },
-            shape = RoundedCornerShape(12.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp)
-                .testTag("clear_db_button"),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.errorContainer,
-                contentColor = MaterialTheme.colorScheme.onErrorContainer
-            )
-        ) {
-            Icon(Icons.Default.DeleteForever, contentDescription = "Clear database")
-            Spacer(modifier = Modifier.width(6.dp))
-            Text("Clear Raw Local Database", fontWeight = FontWeight.Bold)
-        }
     }
 
-    if (showSuccessDialog) {
-        AlertDialog(
-            onDismissRequest = { showSuccessDialog = false },
-            title = { Text("Imports Complete") },
-            text = { Text("Database restored successfully from local JSON archive. Your ledger totals and transaction lists are recalculated.") },
-            confirmButton = {
-                Button(onClick = { showSuccessDialog = false }, shape = RoundedCornerShape(10.dp)) {
-                    Text("Ok")
+    // Modal dialog for Managed Custom Rule Creation
+    if (showRuleDialog) {
+        var inputKeyWord by remember { mutableStateOf("") }
+        var inputCategory by remember { mutableStateOf("Food") }
+        var inputMerchantName by remember { mutableStateOf("") }
+        var inputTag by remember { mutableStateOf("sub_category") }
+
+        Dialog(onDismissRequest = { showRuleDialog = false }) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp),
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .padding(16.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text("Add Auto Routing Rule", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    
+                    OutlinedTextField(
+                        value = inputKeyWord,
+                        onValueChange = { inputKeyWord = it },
+                        label = { Text("Search Key Word (e.g. Netflix)") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth().testTag("add_rule_keyword")
+                    )
+
+                    OutlinedTextField(
+                        value = inputMerchantName,
+                        onValueChange = { inputMerchantName = it },
+                        label = { Text("Clean brand title (e.g. Netflix Streaming)") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Text("Attach Category Destination", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        items(customCategories) { cat ->
+                            val isSelected = inputCategory == cat
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = { inputCategory = cat },
+                                label = { Text(cat) }
+                            )
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = inputTag,
+                        onValueChange = { inputTag = it },
+                        label = { Text("Custom Search Tag (e.g. movies)") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(onClick = { showRuleDialog = false }) {
+                            Text("Revert")
+                        }
+                        Button(
+                            onClick = {
+                                if (inputKeyWord.trim().isNotEmpty() && inputMerchantName.trim().isNotEmpty()) {
+                                    viewModel.addAutomationRule(
+                                        keyword = inputKeyWord.trim(),
+                                        category = inputCategory,
+                                        tag = inputTag,
+                                        cleanMerchant = inputMerchantName.trim()
+                                    )
+                                    showRuleDialog = false
+                                }
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.testTag("save_rule_confirm_btn")
+                        ) {
+                            Text("Deploy Rule", fontWeight = FontWeight.Bold)
+                        }
+                    }
                 }
             }
-        )
+        }
     }
 }
 
-// ---------------- DIALOGS ----------------
-
+// ==========================================
+// 6. TRANSACTION LOGGING MODAL DIALOG
+// ==========================================
 @Composable
 fun TransactionFormDialog(
     title: String,
@@ -1908,8 +2094,7 @@ fun TransactionFormDialog(
     val timestamp = transaction?.timestamp ?: System.currentTimeMillis()
 
     val aiState by viewModel.aiSuggestionState.collectAsStateWithLifecycle()
-
-    val categories = listOf("Food", "Salary", "Rent/Bills", "Shopping", "Transport", "Entertainment", "Health", "Investment", "Other")
+    val categories by viewModel.customCategoriesSetting.collectAsStateWithLifecycle()
 
     Dialog(onDismissRequest = {
         viewModel.resetAiSuggestion()
@@ -1938,11 +2123,11 @@ fun TransactionFormDialog(
                     color = MaterialTheme.colorScheme.primary
                 )
 
-                // Description Input
+                // Decent description field
                 OutlinedTextField(
                     value = description,
                     onValueChange = { description = it },
-                    label = { Text("Merchant / Description") },
+                    label = { Text("Details / Merchant Name") },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier
@@ -1950,22 +2135,8 @@ fun TransactionFormDialog(
                         .testTag("dialog_desc_input")
                 )
 
-                // Amount
-                OutlinedTextField(
-                    value = amountStr,
-                    onValueChange = { amountStr = it },
-                    label = { Text("Amount") },
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("dialog_amount_input"),
-                    leadingIcon = { Text("$", fontWeight = FontWeight.Bold) }
-                )
-
-                // Type selector row
-                Text("Type", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                // Flow type Row selector (DEBIT vs CREDIT vs TRANSFER)
+                Text("Flow Type", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1976,87 +2147,100 @@ fun TransactionFormDialog(
                             onClick = { type = t },
                             shape = RoundedCornerShape(10.dp),
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
-                                contentColor = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                                containerColor = if (isSelected) {
+                                    if (t == "CREDIT") Color(0xFF27AE60) else if (t == "DEBIT") Color(0xFFC0392B) else MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceVariant
+                                },
+                                contentColor = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
                             ),
                             modifier = Modifier
                                 .weight(1f)
                                 .testTag("dialog_type_btn_$t")
                         ) {
-                            Text(t, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            Text(t, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
 
-                // AI Categorizer Button with soft purple colors mimicking Sleek interface smart alerts
-                Button(
-                    onClick = {
-                        val amtNum = amountStr.toDoubleOrNull() ?: 0.0
-                        viewModel.suggestCategoryAndTagAI(description, amtNum, type)
-                    },
+                // Amount numeric entry field
+                OutlinedTextField(
+                    value = amountStr,
+                    onValueChange = { amountStr = it },
+                    label = { Text("Fiducial Amount ($)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(44.dp)
-                        .testTag("dialog_ai_assist_btn"),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                    ),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
-                ) {
-                    Icon(Icons.Default.Psychology, contentDescription = "AI")
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Auto-Categorize with Gemini", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                }
+                        .testTag("dialog_amount_input")
+                )
 
-                // AI Response Status Block inside dialog Form
-                AnimatedVisibility(visible = aiState !is AiSuggestionState.Idle) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
-                            .border(BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)), RoundedCornerShape(12.dp))
-                            .padding(10.dp)
-                    ) {
+                // Premium AI categorization fallback evaluation
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.08f)),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.15f))
+                ) {
+                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Icon(Icons.Default.AutoAwesome, contentDescription = "AI Scan", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                                Text("INTELLIGENT AI ENVELOPE", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                            }
+                            Button(
+                                onClick = {
+                                    val amt = amountStr.toDoubleOrNull() ?: 0.0
+                                    viewModel.suggestCategoryAndTagAI(description, amt, type)
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                                modifier = Modifier.height(28.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                            ) {
+                                Text("Ask Gemini", fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
                         when (aiState) {
                             is AiSuggestionState.Loading -> {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    CircularProgressIndicator(modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text("Analyzing description with LLM...", style = MaterialTheme.typography.bodySmall)
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 1.8.dp)
+                                    Text("Gemini scanning merchant logs...", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
                             is AiSuggestionState.Success -> {
-                                val sug = (aiState as AiSuggestionState.Success).suggestion
+                                val s = (aiState as AiSuggestionState.Success).suggestion
                                 Column {
-                                    Text("Gemini predicted mapping:", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                                    Text("AI Confidence Prediction Matrix:", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color(0xFF27AE60))
+                                    Text("• Suggested Segment: ${s.category}", style = MaterialTheme.typography.bodySmall)
+                                    Text("• Extracted Brand: ${s.merchant} • Label: ${s.tag}", style = MaterialTheme.typography.bodySmall)
                                     Spacer(modifier = Modifier.height(4.dp))
-                                    Text("Category -> ${sug.category}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
-                                    Text("Tag -> #${sug.tag}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
-                                    Text("Merchant -> ${sug.merchant}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
-
-                                    Spacer(modifier = Modifier.height(8.dp))
                                     Button(
                                         onClick = {
-                                            category = if (categories.contains(sug.category)) sug.category else "Other"
-                                            tag = sug.tag.lowercase()
-                                            description = sug.merchant
+                                            category = s.category
+                                            tag = s.tag
+                                            if (s.merchant.isNotEmpty()) {
+                                                description = s.merchant
+                                            }
                                             viewModel.resetAiSuggestion()
                                         },
-                                        shape = RoundedCornerShape(8.dp),
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .height(32.dp),
+                                            .height(30.dp),
                                         contentPadding = PaddingValues(0.dp)
                                     ) {
-                                        Text("Apply AI Suggestions", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        Text("Apply AI Metrics", fontSize = 10.sp, fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }
                             is AiSuggestionState.Error -> {
                                 Text(
-                                    text = "Error suggestion: ${(aiState as AiSuggestionState.Error).message}. Please write manually.",
+                                    text = "Evaluation failed: ${(aiState as AiSuggestionState.Error).message}. Proceeding with manual input.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.error
                                 )
@@ -2066,8 +2250,8 @@ fun TransactionFormDialog(
                     }
                 }
 
-                // Category selection dropdown/pills
-                Text("Category", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                // Category Selection Carousel
+                Text("Category Segment", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
                 LazyRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxWidth()
@@ -2083,11 +2267,11 @@ fun TransactionFormDialog(
                     }
                 }
 
-                // Custom tags
+                // Search tags
                 OutlinedTextField(
                     value = tag,
                     onValueChange = { tag = it },
-                    label = { Text("Merchant Tag (e.g. uber, groceries)") },
+                    label = { Text("Filter Tag (e.g. coffee, groceries)") },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier
@@ -2095,8 +2279,8 @@ fun TransactionFormDialog(
                         .testTag("dialog_tag_input")
                 )
 
-                // Accounts selector
-                Text("Source Account", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                // Multi account source selector
+                Text("Liquidity Account Source", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -2119,7 +2303,7 @@ fun TransactionFormDialog(
                     }
                 }
 
-                // Action buttons
+                // Dialog Buttons
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -2131,7 +2315,7 @@ fun TransactionFormDialog(
                         viewModel.resetAiSuggestion()
                         onDismiss()
                     }) {
-                        Text("Cancel", fontWeight = FontWeight.Bold)
+                        Text("Revert", fontWeight = FontWeight.Bold)
                     }
 
                     Button(
@@ -2140,12 +2324,12 @@ fun TransactionFormDialog(
                             if (amt <= 0.0) {
                                 return@Button
                             }
-                            onSave(amt, type, category, tag, description.ifEmpty { "Manual Transaction" }, account, timestamp)
+                            onSave(amt, type, category, tag, description.ifEmpty { "Manual Log" }, account, timestamp)
                         },
                         shape = RoundedCornerShape(10.dp),
                         modifier = Modifier.testTag("dialog_save_btn")
                     ) {
-                        Text("Save Record", fontWeight = FontWeight.Bold)
+                        Text("Commit Record", fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -2153,8 +2337,7 @@ fun TransactionFormDialog(
     }
 }
 
-// ---------------- CONVERTERS & HELPERS ----------------
-
+// ---------------- CURRENCY UTILITIES ----------------
 fun formatCurrency(amount: Double): String {
     val format = NumberFormat.getCurrencyInstance(Locale.US)
     return format.format(amount)

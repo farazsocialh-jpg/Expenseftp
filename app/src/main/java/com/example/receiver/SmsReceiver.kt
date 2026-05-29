@@ -23,25 +23,26 @@ class SmsReceiver : BroadcastReceiver() {
             val pdus = bundle.get("pdus") as? Array<*> ?: return
             val format = bundle.getString("format")
 
-            for (pdu in pdus) {
-                val sms = SmsMessage.createFromPdu(pdu as ByteArray, format)
-                val sender = sms.originatingAddress ?: ""
-                val body = sms.messageBody ?: ""
+            // Correctly obtain the PendingResult once outside of PDU loop
+            val pendingResult = goAsync()
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    val db = AppDatabase.getDatabase(context)
+                    val repository = db.transactionDao()
+                    val settingsDao = db.appSettingDao()
 
-                Log.d(TAG, "Received SMS from '$sender' with body: '$body'")
+                    // Check the user-selected sender from db setting
+                    val selectedSender = settingsDao.getSettingByKeyImmediate("selected_sms_sender")?.value ?: "HDFCBank"
 
-                // Process in background coroutine
-                val pendingResult = goAsync()
-                CoroutineScope(Dispatchers.IO).launch {
-                    try {
-                        val db = AppDatabase.getDatabase(context)
-                        val repository = db.transactionDao()
-                        val settingsDao = db.appSettingDao()
+                    for (pdu in pdus) {
+                        val pduBytes = pdu as? ByteArray ?: continue
+                        val sms = SmsMessage.createFromPdu(pduBytes, format)
+                        val sender = sms.originatingAddress ?: ""
+                        val body = sms.messageBody ?: ""
 
-                        // Check the user-selected sender from db setting
-                        val selectedSender = settingsDao.getSettingByKeyImmediate("selected_sms_sender")?.value ?: "HDFCBank"
+                        Log.d(TAG, "Received SMS from '$sender' with body: '$body'")
 
-                        // Match selected sender (case-insensitive and could be partial match, e.g., "HDFC" matches "AD-HDFCBK")
+                        // Match selected sender (case-insensitive and could be partial match)
                         if (sender.contains(selectedSender, ignoreCase = true) || selectedSender.contains(sender, ignoreCase = true)) {
                             val parsed = SmsParser.parseMessage(sender, body)
                             if (parsed != null && parsed.amount > 0.0) {
@@ -62,11 +63,11 @@ class SmsReceiver : BroadcastReceiver() {
                         } else {
                             Log.d(TAG, "SMS sender '$sender' did not match selected sender '$selectedSender'")
                         }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error processing received SMS", e)
-                    } finally {
-                        pendingResult.finish()
                     }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error processing received SMS", e)
+                } finally {
+                    pendingResult.finish()
                 }
             }
         } catch (e: Exception) {
