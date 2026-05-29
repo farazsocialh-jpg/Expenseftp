@@ -1,0 +1,6 @@
+{
+  "name": "Expense Manager",
+  "description": "An offline-first budget and expense manager with automated SMS transaction parsing and AI-driven smart category and tag recommendations.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
